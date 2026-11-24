@@ -154,8 +154,26 @@ pub(crate) extern "system" fn wait(
         TIMEOUT
     } else {
         std::thread::sleep(wait);
-        last(kind).fetch_max(tick, Ordering::Relaxed);
-        S_OK
+        // The tick is this waiter's only when it advanced `last`: two waits
+        // that wake together otherwise both end on it. A loser waits again,
+        // on the next tick, against its original time-out.
+        let claimed = last(kind).fetch_max(tick, Ordering::Relaxed) < tick;
+        if claimed {
+            S_OK
+        } else if limit > wait {
+            let left = limit - wait;
+            let (tick, wait) = next_tick(kind);
+            if wait > left {
+                std::thread::sleep(left);
+                TIMEOUT
+            } else {
+                std::thread::sleep(wait);
+                last(kind).fetch_max(tick, Ordering::Relaxed);
+                S_OK
+            }
+        } else {
+            TIMEOUT
+        }
     };
     #[cfg(all(windows, feature = "diagnostics"))]
     {
@@ -294,5 +312,28 @@ mod tests {
         // Even when a flip wait begins on the tick another just ended on.
         let (tick, _) = next_tick(FLIP);
         assert!(tick > flips[3]);
+
+        // Two waits that wake together take two ticks: one does not end on
+        // the tick another has claimed, both succeed.
+        assert_eq!(set_interval(null, null, 10_000, 2, 0), S_OK);
+        let _ = wait(null, 0, 0, std::ptr::null(), TOKEN_ON_TIMEOUT, &mut token);
+        let results: Vec<HRESULT> = std::thread::scope(|s| {
+            // `wait` does not dereference `this`; each thread builds its own
+            // null (a raw pointer does not cross a closure capture's Send).
+            let joins: Vec<_> = (0..2)
+                .map(|_| {
+                    s.spawn(|| {
+                        let this: This = std::ptr::null();
+                        let mut token = 0;
+                        wait(this, FLIP, u32::MAX, std::ptr::null(), 0, &mut token)
+                    })
+                })
+                .collect();
+            joins.into_iter().map(|j| j.join().unwrap()).collect()
+        });
+        assert_eq!(results, [S_OK; 2]);
+        let end = LAST[2].load(Ordering::Relaxed);
+        let (next, _) = next_tick(FLIP);
+        assert_eq!(next, end + 1, "both waits took their own tick");
     }
 }
