@@ -891,13 +891,13 @@ fn emit_forms(
             }
         }
     }
-    // SCC of a mask operation joined with a scalar test behind a per-lane skip (the 32-lane
-    // trace programs): right once the wave takes that skip together ([`widen`]; the
-    // lowering has named the skipped blocks).
+    // Cross-lane code that needs every lane of the console wave where it
+    // stands (a mask operation, a lane read, a first-lane read): right once
+    // the wave takes the per-lane branches around it together ([`widen`];
+    // the lowering has named the blocks that could not meet).
     let original = match original {
         Err(ShaderError::Unsupported { what, .. })
-            if native.stage == HwStage::Cs
-                && what == lower::LANE_MASK
+            if needs_wave_wide(native.stage, what)
                 && std::env::var_os("VICTORY_WAVE_WIDE").is_none_or(|v| v != "0") =>
         {
             let again = widen(c, native, p, std::env::var_os("VICTORY_WAVE_WHY").is_some(), false);
@@ -992,6 +992,13 @@ fn split_choices(
         }
     }
     None
+}
+
+/// Whether a refusal is of cross-lane code that the wave-wide retry can fix:
+/// a mask read as data, or code that needs every lane of the console wave
+/// where it stands (a lane read, a first-lane read).
+pub(super) fn needs_wave_wide(stage: HwStage, what: &str) -> bool {
+    stage == HwStage::Cs && (what == lower::LANE_MASK || lower::needs_every_lane(what))
 }
 
 /// `p` (a console wave64 compute program on a host of 32-lane waves) with the per-lane
