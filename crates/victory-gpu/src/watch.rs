@@ -3843,12 +3843,26 @@ fn writable(at: usize) -> bool {
     n != 0 && info.State == MEM_COMMIT && info.Protect == PAGE_READWRITE
 }
 
+/// The tests of this file share what the process has once and keys by
+/// address: the guards and their bits, the journal and the submission's one
+/// asking, the views told. Run beside one another they told each other's
+/// memory written, opened or asked (Windows hands an address one test freed
+/// to the next, and two tests each played the one submitting thread), now and
+/// then failing; one at a time they always pass. Each takes this lock for its
+/// whole run; the crate's other tests still run beside them.
+#[cfg(test)]
+pub(crate) fn serial_test() -> std::sync::MutexGuard<'static, ()> {
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod parts_tests {
     use super::*;
 
     #[test]
     fn ranges_asked_ahead_hold_what_lies_in_one_of_them() {
+        let _serial = crate::watch::serial_test();
         let all = [(10, 20), (12, 14), (30, 40), (15, 35), (50, 51)];
         let mut ahead = Ahead::new();
         ahead.set(all.to_vec());
@@ -3865,6 +3879,7 @@ mod parts_tests {
 
     #[test]
     fn the_parts_of_a_page_written_since_it_was_taken() {
+        let _serial = crate::watch::serial_test();
         let mut j = Shard::new();
         assert_eq!(j.parts_since(7, 0), WHOLE);
         assert_eq!(j.note(7, WHOLE, 3), 0);
@@ -3895,6 +3910,7 @@ mod tests {
 
     #[test]
     fn written_pages_are_reported_to_every_asker() {
+        let _serial = crate::watch::serial_test();
         // SAFETY: a fresh write-watched allocation, freed at the end.
         let p = unsafe {
             VirtualAlloc(
@@ -3935,6 +3951,7 @@ mod tests {
     /// lands and the block counts as written.
     #[test]
     fn kernel_reads_into_guarded_blocks_after_opening() {
+        let _serial = crate::watch::serial_test();
         use std::io::{Read, Seek, Write};
         use windows_sys::Win32::System::Memory::{
             CreateFileMappingW, FILE_MAP_WRITE, MapViewOfFile, UnmapViewOfFile,
@@ -4049,6 +4066,7 @@ mod tests {
     /// read itself leaves it open: the read lands, and is seen.
     #[test]
     fn a_refresh_leaves_open_what_the_kernel_is_writing() {
+        let _serial = crate::watch::serial_test();
         use std::io::{Read, Seek, Write};
         use windows_sys::Win32::System::Memory::{CreateFileMappingW, FILE_MAP_WRITE, MapViewOfFile, UnmapViewOfFile};
         // SAFETY: a pagefile section of two blocks, mapped read-write.
@@ -4100,6 +4118,7 @@ mod tests {
     /// the runtime has begun to change; after that it is again.
     #[test]
     fn what_is_left_alone_is_no_known_hole() {
+        let _serial = crate::watch::serial_test();
         let p = placeholder(3);
         let known = |block: usize| published(p + block * BLOCK, p + (block + 1) * BLOCK);
         let ask = || writes(p, p + 3 * BLOCK, true).expect("as a view");
@@ -4140,6 +4159,7 @@ mod tests {
     /// begun to unmap: no note of it stays behind.
     #[test]
     fn nothing_is_guarded_between_our_forgetting_it_and_its_unmapping() {
+        let _serial = crate::watch::serial_test();
         use windows_sys::Win32::System::Memory::{CreateFileMappingW, FILE_MAP_WRITE, MapViewOfFile, UnmapViewOfFile};
         // SAFETY: a pagefile section of a block, mapped read-write.
         let view = unsafe {
@@ -4169,6 +4189,7 @@ mod tests {
     /// taken for them: code stays code, private memory is not guarded.
     #[test]
     fn other_memory_at_a_guarded_address_keeps_its_protection() {
+        let _serial = crate::watch::serial_test();
         use windows_sys::Win32::System::Memory::{
             CreateFileMappingW, MEM_PRESERVE_PLACEHOLDER, MEM_REPLACE_PLACEHOLDER, MapViewOfFile3, PAGE_EXECUTE_READ,
             PAGE_EXECUTE_READWRITE, UnmapViewOfFile2,
@@ -4232,6 +4253,7 @@ mod tests {
     /// its length or the allocation.
     #[test]
     fn freed_memory_leaves_no_notes() {
+        let _serial = crate::watch::serial_test();
         let p = placeholder(3);
         let noted = |block: usize| {
             let g = guards();
@@ -4263,6 +4285,7 @@ mod tests {
     /// copied.
     #[test]
     fn the_rest_of_the_one_asking_has_a_number_of_its_own() {
+        let _serial = crate::watch::serial_test();
         // SAFETY: a fresh write-watched allocation, freed at the end.
         let p = unsafe {
             VirtualAlloc(std::ptr::null(), 4 * PAGE, MEM_RESERVE | MEM_COMMIT | MEM_WRITE_WATCH, PAGE_READWRITE)
@@ -4288,6 +4311,7 @@ mod tests {
     /// title code.
     #[test]
     fn a_block_guarded_before_we_were_told_of_its_view_can_be_written() {
+        let _serial = crate::watch::serial_test();
         use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
         use windows_sys::Win32::System::Memory::{
             CreateFileMappingW, FILE_MAP_WRITE, MapViewOfFile, UnmapViewOfFile,
@@ -4330,6 +4354,7 @@ mod tests {
 
     #[test]
     fn writes_in_partly_committed_view_blocks_are_reported() {
+        let _serial = crate::watch::serial_test();
         use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
         use windows_sys::Win32::System::Memory::{
             CreateFileMappingW, FILE_MAP_WRITE, MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile,
@@ -4391,6 +4416,7 @@ mod tests {
     /// or mapped since.
     #[test]
     fn a_range_that_begins_in_an_unmapped_block_is_guarded() {
+        let _serial = crate::watch::serial_test();
         use windows_sys::Win32::System::Memory::{
             CreateFileMappingW, MEM_PRESERVE_PLACEHOLDER, MEM_REPLACE_PLACEHOLDER,
             MEM_RESERVE_PLACEHOLDER, MapViewOfFile3, PAGE_NOACCESS, UnmapViewOfFile2,
@@ -4482,6 +4508,7 @@ mod tests {
     /// again (they cannot be guarded) until the runtime maps them.
     #[test]
     fn unmapped_blocks_are_reported_once_until_mapped() {
+        let _serial = crate::watch::serial_test();
         use windows_sys::Win32::System::Memory::{
             CreateFileMappingW, MEM_PRESERVE_PLACEHOLDER, MEM_REPLACE_PLACEHOLDER,
             MEM_RESERVE_PLACEHOLDER, MapViewOfFile3, PAGE_NOACCESS, UnmapViewOfFile2,
@@ -4615,6 +4642,7 @@ mod tests {
     /// guarded view's next check reports the pages written.
     #[test]
     fn a_write_through_another_view_is_reported_at_the_guarded_one() {
+        let _serial = crate::watch::serial_test();
         const SIZE: usize = 2 * BLOCK;
         let (section, guarded, other) = two_views(SIZE);
         let pages = |block: usize| (guarded + block * BLOCK) / PAGE;
@@ -4634,6 +4662,7 @@ mod tests {
     /// guarded view checks its pages again (and guards the new view).
     #[test]
     fn a_view_mapped_beside_a_guarded_one_makes_it_check_again() {
+        let _serial = crate::watch::serial_test();
         const SIZE: usize = 2 * BLOCK;
         let (section, guarded, other) = two_views(SIZE);
         let pages = |block: usize| (guarded + block * BLOCK) / PAGE;
@@ -4650,6 +4679,7 @@ mod tests {
     /// (`writing`): the other views' next checks report the pages written.
     #[test]
     fn a_write_told_at_one_view_is_reported_at_the_others() {
+        let _serial = crate::watch::serial_test();
         const SIZE: usize = 2 * BLOCK;
         let (section, guarded, other) = two_views(SIZE);
         let pages = |block: usize| (guarded + block * BLOCK) / PAGE;
@@ -4672,6 +4702,7 @@ mod tests {
     /// keep the bytes from before the write.
     #[test]
     fn a_write_is_reported_at_every_checked_view() {
+        let _serial = crate::watch::serial_test();
         const SIZE: usize = 2 * BLOCK;
         let (section, one, two) = two_views(SIZE);
         let pages = |view: usize, block: usize| (view + block * BLOCK) / PAGE;
@@ -4696,6 +4727,7 @@ mod tests {
     /// read-only, are told as written, and take writes of their own.
     #[test]
     fn a_write_opens_the_view_it_goes_through() {
+        let _serial = crate::watch::serial_test();
         let (section, one, two) = two_views(BLOCK);
         let page = |view: usize| view / PAGE;
         for view in [one, two] {
@@ -4727,6 +4759,7 @@ mod tests {
     /// as written at each asking, at every view of it, until it has rested.
     #[test]
     fn a_block_just_written_rests() {
+        let _serial = crate::watch::serial_test();
         let (section, one, two) = two_views(BLOCK);
         let page = one / PAGE;
         let rests = |rests: bool| REST_IN_TEST.set(std::time::Duration::from_secs(if rests { 3600 } else { 0 }));
@@ -4753,6 +4786,7 @@ mod tests {
     /// block stays read-only; until it has had its share.
     #[test]
     fn what_the_title_puts_in_beside_a_guard_is_told() {
+        let _serial = crate::watch::serial_test();
         let (section, one, two) = two_views(BLOCK);
         crate::title_memory_section(section, BLOCK as u64, true);
         let page = |view: usize| view / PAGE;
@@ -4801,6 +4835,7 @@ mod tests {
     /// after, the block's guard and what the next asking says.
     #[test]
     fn stores_and_copies_of_the_title_leave_the_guard() {
+        let _serial = crate::watch::serial_test();
         use std::sync::atomic::{AtomicU32, Ordering};
         unsafe extern "system-unwind" fn real(to: *mut u8, from: *const u8, n: usize) -> *mut u8 {
             // SAFETY: by the caller.
@@ -4872,6 +4907,7 @@ mod tests {
     /// written since; where they are not known, all of it.
     #[test]
     fn what_is_taken_again_is_what_was_written() {
+        let _serial = crate::watch::serial_test();
         // SAFETY: a fresh write-watched allocation, freed at the end.
         let p = unsafe {
             VirtualAlloc(std::ptr::null(), 4 * PAGE, MEM_RESERVE | MEM_COMMIT | MEM_WRITE_WATCH, PAGE_READWRITE)
@@ -4906,6 +4942,7 @@ mod tests {
     /// The frames pages were last landed in.
     #[test]
     fn landed_pages_are_known_by_their_frame() {
+        let _serial = crate::watch::serial_test();
         static LANDED: Landed = Landed([const { std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()) }; Landed::PIECES]);
         let landed = &LANDED;
         for page in [0, 5, Landed::PAGES - 1, Landed::PAGES, 7 * Landed::PAGES + 3] {
@@ -4924,6 +4961,7 @@ mod tests {
     /// The set of blocks against another of the same.
     #[test]
     fn blocks_are_a_set() {
+        let _serial = crate::watch::serial_test();
         let (set, mut other) = (Blocks::new(), BTreeSet::new());
         let mut seed = 1u64;
         let mut next = |n: usize| {
@@ -4955,6 +4993,7 @@ mod tests {
     /// the write through one takes the bits of all.
     #[test]
     fn bits_go_at_every_view() {
+        let _serial = crate::watch::serial_test();
         const SIZE: usize = 2 * BLOCK;
         let (section, one, two) = two_views(SIZE);
         let ask = |at: usize| writes(at, at + SIZE, true).expect("a view");
@@ -4976,6 +5015,7 @@ mod tests {
     /// is told as written at every asking, and the first is not guarded.
     #[test]
     fn what_the_kernel_writes_through_is_not_guarded_for_another_view() {
+        let _serial = crate::watch::serial_test();
         let (section, one, two) = two_views(BLOCK);
         let page = one / PAGE;
         assert_eq!(guard(one, one + BLOCK), Some(vec![page]));
@@ -5001,6 +5041,7 @@ mod tests {
     /// wrote while a submission's one asking stands.
     #[test]
     fn what_is_put_in_beside_the_guards_is_told_at_every_view() {
+        let _serial = crate::watch::serial_test();
         let (section, one, two) = two_views(BLOCK);
         writes(two, two + BLOCK, true).expect("a view");
         let (before, _) = writes(two, two + BLOCK, true).expect("a view");
@@ -5016,6 +5057,7 @@ mod tests {
     /// count as written wherever else they are shown.
     #[test]
     fn a_view_being_split_leaves_its_pages_unguarded_elsewhere() {
+        let _serial = crate::watch::serial_test();
         const SIZE: usize = 3 * BLOCK;
         let (section, one, two) = two_views(SIZE);
         let pages: Vec<usize> = (0..3).map(|k| one / PAGE + k).collect();
@@ -5043,6 +5085,7 @@ mod tests {
     /// itself: the others stay writable, and nothing looks through them all.
     #[test]
     fn a_page_of_many_views_is_guarded_one_view_at_a_time() {
+        let _serial = crate::watch::serial_test();
         let (section, one, two) = two_views(BLOCK);
         let filler = one + (1 << 45);
         for n in 0..MANY_VIEWS {
@@ -5062,6 +5105,7 @@ mod tests {
     /// to overflow. Up there no test has guarded blocks.
     #[test]
     fn ranges_past_the_address_space_end_do_not_overflow() {
+        let _serial = crate::watch::serial_test();
         let top = usize::MAX - 16;
         writing(top, PAGE);
         title_memory_remapped(top, usize::MAX);
@@ -5079,6 +5123,7 @@ mod mapping_tests {
     /// a read in place waits for a change of mapping.
     #[test]
     fn reads_in_place_and_remappings_wait_for_each_other() {
+        let _serial = crate::watch::serial_test();
         // A reader holds; the change does not begin until it lets go.
         let changed = Arc::new(AtomicBool::new(false));
         let reading = title_memory_reading();
@@ -5128,6 +5173,7 @@ mod many_askers_tests {
     /// its own asking or by one that took the kernel's answer before it).
     #[test]
     fn no_write_is_lost_between_askers() {
+        let _serial = crate::watch::serial_test();
         const MEM_WRITE_WATCH: u32 = 0x20_0000;
         const PAGES: usize = 48;
         const THREADS: usize = 8;
@@ -5171,6 +5217,7 @@ mod many_askers_tests {
     /// again between.
     #[test]
     fn no_write_to_views_is_lost_between_askers() {
+        let _serial = crate::watch::serial_test();
         writes_to_views_are_not_lost::<1>(0, 0);
     }
 
@@ -5179,6 +5226,7 @@ mod many_askers_tests {
     /// changed by the holder of its claim.
     #[test]
     fn no_write_to_views_is_lost_between_askers_with_port_6() {
+        let _serial = crate::watch::serial_test();
         writes_to_views_are_not_lost::<1>(0, 1);
     }
 
@@ -5187,6 +5235,7 @@ mod many_askers_tests {
     /// alone (the switch changes in an A/B run).
     #[test]
     fn no_write_through_another_view_is_lost_with_port_6() {
+        let _serial = crate::watch::serial_test();
         writes_to_views_are_not_lost::<3>(0, 1);
         writes_to_views_are_not_lost::<3>(0, 2);
     }
@@ -5194,6 +5243,7 @@ mod many_askers_tests {
     /// Resting blocks with port #6, hot ones resting longer.
     #[test]
     fn no_write_to_resting_views_is_lost_with_port_6() {
+        let _serial = crate::watch::serial_test();
         writes_to_views_are_not_lost::<3>(50, 1);
         writes_to_views_are_not_lost::<1>(50, 2);
     }
@@ -5201,6 +5251,7 @@ mod many_askers_tests {
     /// The same with blocks that rest after a write ([`super::rest`]).
     #[test]
     fn no_write_to_resting_views_is_lost_between_askers() {
+        let _serial = crate::watch::serial_test();
         writes_to_views_are_not_lost::<1>(50, 0);
         writes_to_views_are_not_lost::<3>(50, 0);
     }
@@ -5212,6 +5263,7 @@ mod many_askers_tests {
     /// for one address only, `VICTORY_VIEW_GUARD=0`.)
     #[test]
     fn no_write_through_another_view_is_lost_between_askers() {
+        let _serial = crate::watch::serial_test();
         writes_to_views_are_not_lost::<3>(0, 0);
     }
 
@@ -5379,6 +5431,7 @@ mod many_askers_tests {
     /// allocated there. A hole that is no placeholder's is asked about.
     #[test]
     fn holes_are_known_until_the_runtime_tells() {
+        let _serial = crate::watch::serial_test();
         use windows_sys::Win32::System::Threading::GetCurrentProcess;
         const BLOCKS: usize = 8;
         // SAFETY (all): a placeholder and a section of our own, which stay.
@@ -5464,6 +5517,7 @@ mod many_askers_tests {
     /// whoever asks after it, and blocks are known by their bits meanwhile.
     #[test]
     fn no_mapping_is_lost_between_askers() {
+        let _serial = crate::watch::serial_test();
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         use windows_sys::Win32::System::Threading::GetCurrentProcess;
         const BLOCKS: usize = 12;
@@ -5555,6 +5609,7 @@ mod many_askers_tests {
     /// or forgets it.
     #[test]
     fn bits_go_with_the_guard() {
+        let _serial = crate::watch::serial_test();
         // SAFETY: a view of a section of our own, which stays.
         let at = unsafe {
             let section =
@@ -5590,6 +5645,7 @@ mod many_askers_tests {
     /// A range's bits are all of its blocks', whatever lies beside them.
     #[test]
     fn bits_of_ranges() {
+        let _serial = crate::watch::serial_test();
         static BITS: super::Bits = super::Bits::new();
         let blocks = [0usize, 1, 63, 64, 65, 127, 128, 200, 65535, 65536, 65537, 1 << 20, (1 << 31) - 1];
         for &b in &blocks {
@@ -5625,6 +5681,7 @@ mod port7_tests {
     /// time or holding its parts, over ranges across the parts' bounds.
     #[test]
     fn parts_pieces_and_ranges_agree() {
+        let _serial = crate::watch::serial_test();
         const P: usize = 1 << SHARD_SHIFT;
         assert_eq!(shards_of(0, 0), 0);
         assert_eq!(shards_of(0, 1), 1);
@@ -5658,6 +5715,7 @@ mod port7_tests {
     /// page's note, and its parts', only go up.
     #[test]
     fn notes_only_go_up() {
+        let _serial = crate::watch::serial_test();
         let mut s = Shard::new();
         assert_eq!(s.note(3, WHOLE, 9), 0);
         assert_eq!(s.note(3, 0b11, 5), 9);
@@ -5680,6 +5738,7 @@ mod port7_tests {
     /// test after 60 s.)
     #[test]
     fn a_fresh_number_sees_every_lower_note_and_nobody_deadlocks() {
+        let _serial = crate::watch::serial_test();
         const P: usize = 1 << SHARD_SHIFT;
         const THREADS: usize = 8;
         const ROUNDS: usize = 3000;
@@ -5761,6 +5820,7 @@ mod port7_tests {
     /// before asking is told of that write.
     #[test]
     fn no_write_is_lost_with_port_7() {
+        let _serial = crate::watch::serial_test();
         askers_and_a_submission(1);
         askers_and_a_submission(2);
     }
