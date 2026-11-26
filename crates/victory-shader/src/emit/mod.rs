@@ -124,12 +124,12 @@ use crate::{ShaderError, io, ir, resource, structure};
 pub use bitcode::census;
 pub use link::{link_mesh, mesh_fits};
 pub use sampler::StaticSampler;
-pub use lower::{host_settings, set_host_max_wave, set_host_rdna};
+pub use lower::{host_hw_bvh_active, host_hw_bvh_opcode, host_settings, hw_bvh_switch, set_host_hw_bvh, set_host_max_wave, set_host_rdna};
 pub use lower::{D16_BITS_ACCESSES, D16_VIEW_KIND_ACCESSES, HALVES_PLACES, d16_view_kinds};
 pub use PAIRED_BEFORE_WIDE as WAVE_PAIRED_BEFORE_WIDE;
 pub use rect::rect_list_gs;
 pub use shader::{
-    MEMORY_FAULTS, MEMORY_PAGES, MEMORY_READ_ONLY, ROOT_CBV_SPACE, SAMPLER_SPACE, SLOT_FAULTS, SLOT_MEMORY, SLOT_STRIDES,
+    AMD_EXT_SPACE, MEMORY_FAULTS, MEMORY_PAGES, MEMORY_READ_ONLY, MEMORY_VA_OFFSET, ROOT_CBV_SPACE, SLOT_AMD_EXT, SAMPLER_SPACE, SLOT_FAULTS, SLOT_MEMORY, SLOT_STRIDES,
     SLOT_STRIDES_COUNT, SLOT_TABLE_STRIDES, USER_DATA_SPACE, VIEW_INTEGER, VIEW_SIGNED, VIEW_STRIDE_BITS, USER_DISPATCH_THREADS_X, USER_MEMORY_BASE, USER_ROOT_ADDRESS, USER_VIEW_ADDRESS, USER_VIEW_BIAS,
     constants_raw, raw_views, set_raw_views, set_view_heap_limit, view_heap_limit,
 };
@@ -329,6 +329,7 @@ pub fn translation_fingerprint() -> Vec<u8> {
     }
     out.extend_from_slice(&lower::host_max_wave().to_le_bytes());
     out.extend_from_slice(&lower::host_rdna().to_le_bytes());
+    out.push(lower::host_hw_bvh_opcode());
     out.extend_from_slice(&shader::view_heap_limit().to_le_bytes());
     out.extend_from_slice(&shader::raw_views().to_le_bytes());
     out.extend_from_slice(&loop_limit().to_le_bytes());

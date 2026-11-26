@@ -105,6 +105,12 @@ fn build() -> [u8; 32] {
     for value in victory_shader::emit::host_settings() {
         hash.update(&value.to_le_bytes());
     }
+    // Key hardware BVH dynamically (after host_settings) so calling `build()`
+    // before `Host::create()` cannot lock in a stale off state.
+    if victory_shader::emit::host_hw_bvh_active() {
+        hash.update(b"VICTORY_HW_BVH=1");
+        hash.update(&[victory_shader::emit::host_hw_bvh_opcode()]);
+    }
     let key = *hash.finalize().as_bytes();
     static SAID: std::sync::Once = std::sync::Once::new();
     SAID.call_once(|| tracing::info!("{}", key_line_of(&key)));
@@ -113,9 +119,10 @@ fn build() -> [u8; 32] {
 
 /// One line naming the key the translations are cached under, and what it
 /// was made of that a run and `victory shaders` can differ in: the host's
-/// wave width, view-heap null slot, raw view twins and RDNA bits, and
-/// renderer port 5. `victory shaders` fills the run's cache only when its
-/// line says the same key as the run's log.
+/// wave width, view-heap null slot, raw view twins and RDNA bits, renderer
+/// port 5, and the hardware BVH node test (`VICTORY_HW_BVH`). `victory
+/// shaders` fills the run's cache only when its line says the same key as
+/// the run's log.
 pub fn key_line() -> String {
     // The host first, as a run and [`precompile`] open it: what the card can
     // do is part of the key.
@@ -127,9 +134,13 @@ fn key_line_of(key: &[u8; 32]) -> String {
     let [wave, views, raw, rdna] = victory_shader::emit::host_settings();
     let hex: String = key[..4].iter().map(|b| format!("{b:02x}")).collect();
     let port5 = ["off", "on"][usize::from(victory_shader::emit::constants_raw())];
+    let hw_bvh = match victory_shader::emit::host_hw_bvh_opcode() {
+        0 => "off".to_owned(),
+        op => format!("opcode {op:#04x}"),
+    };
     format!(
         "shader cache key {hex}: host wave {wave}, view null slot {views}, raw views {raw}, \
-         RDNA bits {rdna}, port 5 {port5}"
+         RDNA bits {rdna}, port 5 {port5}, hardware BVH {hw_bvh}"
     )
 }
 
