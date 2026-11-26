@@ -111,6 +111,60 @@ impl Made {
     }
 }
 
+/// One bit for each title slot, read without a lock: whether the slot may be
+/// in a set that a lock guards (the queue of textures, the spans of placed
+/// textures). Set before the slot goes in and cleared after it goes out, both
+/// under that lock, so a clear bit says the slot is not in: a write that would
+/// only take it out has nothing to do there and leaves the lock alone
+/// ([`slot_bits`]). The threads making the heaps' records, the title's
+/// threads and the recording threads took the queue's lock for every record
+/// they made, most of them only to take out a slot that was not in: 923
+/// waits, 350 ms over five frames of a timeline (8e9a159, 270 s), about a
+/// third of the records threads' time; and a thread waiting there held the
+/// lock of its slot meanwhile.
+#[derive(Default)]
+pub(crate) struct MayHold(Vec<std::sync::atomic::AtomicU64>);
+
+impl MayHold {
+    fn new(count: usize) -> Self {
+        MayHold((0..count.div_ceil(64)).map(|_| std::sync::atomic::AtomicU64::new(0)).collect())
+    }
+
+    /// Slot `index` may be in from now on. Under the set's lock.
+    fn set(&self, index: u32) {
+        if let Some(word) = self.0.get(index as usize / 64) {
+            word.fetch_or(1u64 << (index % 64), std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    /// Slot `index` is not in. Under the set's lock.
+    fn clear(&self, index: u32) {
+        if let Some(word) = self.0.get(index as usize / 64) {
+            word.fetch_and(!(1u64 << (index % 64)), std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    /// Whether slot `index` may be in; a slot past the bits may.
+    fn may(&self, index: u32) -> bool {
+        self.0
+            .get(index as usize / 64)
+            .is_none_or(|word| word.load(std::sync::atomic::Ordering::Acquire) >> (index % 64) & 1 != 0)
+    }
+}
+
+/// Whether a write that would only take a title slot out of the queue of
+/// textures or out of the spans leaves their lock alone when the slot's bit
+/// says it is not in ([`MayHold`]; `VICTORY_SLOT_BITS=0`: the lock is taken,
+/// as before). The bits are kept either way.
+fn slot_bits() -> bool {
+    crate::toggled!("VICTORY_SLOT_BITS")
+}
+
+/// Diagnostics, since the last frame line: takes of the queue's lock left out
+/// for a write and for a table's read, and takes of the spans' lock left out.
+#[cfg(feature = "diagnostics")]
+pub(crate) static SLOT_BITS: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
+
 pub(crate) struct HostHeap {
     pub(crate) buffer_sweep: Mutex<crate::draw::BufferSweep>,
     pub(crate) buffer_frame: std::sync::atomic::AtomicU64,
@@ -194,6 +248,8 @@ pub(crate) struct HostHeap {
     /// table; one a shader picks by a computed index is brought up to date
     /// from here ([`HostHeap::texture_slots_due`]).
     textures: Mutex<TextureQueue>,
+    /// Which title slots `textures` may hold ([`MayHold`]).
+    queued: std::sync::Arc<MayHold>,
     /// Per title slot, the frame (plus one; 0: never) in which a draw last
     /// read it through a table, or made a table it lies in (with
     /// [`TABLED_READ`] set if the draw read it). The draw that
@@ -212,6 +268,10 @@ pub(crate) struct HostHeap {
     /// other memory there makes stale, and which to look at again when the
     /// runtime maps, unmaps or writes memory ([`remapped`]).
     placed: std::sync::Arc<Mutex<Spans>>,
+    /// Which title slots `placed` may know of ([`MayHold`]): set before
+    /// [`Spans::note`] and [`Spans::shows`], cleared after [`Spans::forget`]
+    /// (only [`HostHeap::note_buffer`] calls them for a slot).
+    spanned: MayHold,
 }
 
 /// The spans of every view heap made ([`HostHeap::placed`]), for the
@@ -954,6 +1014,8 @@ pub(crate) struct TextureQueue {
     /// they need ([`TextureQueue::hold`]), each with the write it was
     /// held as.
     held: std::collections::BTreeMap<u32, u64>,
+    /// The bits of `slots` ([`MayHold`]; none: every slot may be in).
+    queued: std::sync::Arc<MayHold>,
 }
 
 impl TextureQueue {
@@ -967,11 +1029,19 @@ impl TextureQueue {
         }
         self.writes += 1;
         let write = self.writes;
+        self.queued.set(index);
         self.slots.insert(index, Waiting { due, written: frame, write, looks: 0, mapped: 0, checked: (0, 0, 0, 0, 0) });
     }
 
     fn remove(&mut self, index: u32) {
-        self.slots.remove(&index);
+        self.remove_was(index);
+    }
+
+    /// Takes slot `index` out; whether it was in.
+    fn remove_was(&mut self, index: u32) -> bool {
+        let was = self.slots.remove(&index).is_some();
+        self.queued.clear(index);
+        was
     }
 
     /// Up to `max` slots due at `frame`, each with its write number, in
@@ -1017,7 +1087,7 @@ impl TextureQueue {
     /// Slot `index` is up to date: out of the queue until written again.
     fn done(&mut self, index: u32, write: u64) {
         if self.same(index, write).is_some() {
-            self.slots.remove(&index);
+            self.remove_was(index);
         }
     }
 
@@ -1095,6 +1165,7 @@ impl TextureQueue {
         self.writes += 1;
         let write = self.writes;
         let due = self.slots.get(&index).map_or(due, |w| w.due.min(due));
+        self.queued.set(index);
         self.slots.insert(index, Waiting { due, written: frame, write, looks: 0, mapped: 0, checked: (0, 0, 0, 0, 0) });
     }
 
@@ -1607,6 +1678,7 @@ impl HostHeap {
                 Some((buffer, gpu, data as usize))
             })
             .flatten();
+        let queued = std::sync::Arc::new(MayHold::new(count as usize));
         let h = HostHeap {
             buffer_sweep: Mutex::default(),
             buffer_frame: std::sync::atomic::AtomicU64::new(u64::MAX),
@@ -1634,7 +1706,8 @@ impl HostHeap {
             strides,
             buffers: Slots::new(count as usize),
             changed: Slots::new(count as usize),
-            textures: Mutex::default(),
+            textures: Mutex::new(TextureQueue { queued: queued.clone(), ..Default::default() }),
+            queued,
             tabled: (0..if sampler { 0 } else { count })
                 .map(|_| std::sync::atomic::AtomicU32::new(0))
                 .collect(),
@@ -1648,6 +1721,7 @@ impl HostHeap {
                 }
                 spans
             },
+            spanned: MayHold::new(if sampler { 0 } else { count as usize }),
         };
         // A slot never written is undefined: shaders reading one (a slot
         // the title wrote in a way we do not know, or a table entry no
@@ -2612,8 +2686,10 @@ impl HostHeap {
         if old != now | TABLED_READ {
             stamp.store(now | TABLED_READ, Relaxed);
             if tabled_out() {
-                let mut textures = self.textures.lock().unwrap_or_else(|e| e.into_inner());
-                if textures.slots.remove(&index).is_some() {
+                if slot_bits() && !self.queued.may(index) {
+                    #[cfg(feature = "diagnostics")]
+                    SLOT_BITS[1].fetch_add(1, Relaxed);
+                } else if self.textures.lock().unwrap_or_else(|e| e.into_inner()).remove_was(index) {
                     TABLED_WRITES[1].fetch_add(1, Relaxed);
                 }
             }
@@ -2648,6 +2724,12 @@ impl HostHeap {
         // Made now by a draw of this frame that read it through a table:
         // up to date.
         let read_now = seen && stamp == now | TABLED_READ;
+        // Only to take the slot out, and it is not in.
+        if !(texture && !read_now) && slot_bits() && !self.queued.may(index) {
+            #[cfg(feature = "diagnostics")]
+            SLOT_BITS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return;
+        }
         let mut textures = self.textures.lock().unwrap_or_else(|e| e.into_inner());
         if texture && !read_now {
             let due = if lately && !seen {
@@ -2732,7 +2814,12 @@ impl HostHeap {
             }
             _ => None,
         };
-        let stale = {
+        let stale = if placed_view.is_none() && slot_bits() && !self.spanned.may(index) {
+            // Nothing of the slot is known there: forgetting it is nothing.
+            #[cfg(feature = "diagnostics")]
+            SLOT_BITS[2].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Vec::new()
+        } else {
             use std::sync::atomic::Ordering::Relaxed;
             let mut placed = self.placed.lock().unwrap_or_else(|e| e.into_inner());
             let span = placed_view.and_then(|(resource, start, first, held)| {
@@ -2743,6 +2830,7 @@ impl HostHeap {
                     SPANNED[0].fetch_min(start, Relaxed);
                     SPANNED[1].fetch_max(end, Relaxed);
                     placed.rule = stale_rule();
+                    self.spanned.set(index);
                     let stale = placed.note(index, start, end, !seen);
                     placed.shows(index, first, held);
                     // (Under the lock of `placed`: a later write of one of
@@ -2751,6 +2839,7 @@ impl HostHeap {
                 }
                 None => {
                     placed.forget(index);
+                    self.spanned.clear(index);
                     Vec::new()
                 }
             }
@@ -5680,6 +5769,56 @@ mod tests {
         spans.forget(4);
         spans.forget(7);
         assert!(spans.by_start.is_empty() && spans.by_slot.is_empty());
+    }
+
+    /// The queue's bits follow what goes in and what goes out: clear only
+    /// where the slot is not in; with no bits, every slot may be in.
+    #[test]
+    fn the_queue_bits_say_which_slots_may_be_in() {
+        let bits = std::sync::Arc::new(MayHold::new(200));
+        let mut q = TextureQueue { queued: bits.clone(), ..Default::default() };
+        assert!(!bits.may(5) && !bits.may(130));
+        q.written(5, 1, 0, false);
+        q.changed(130, 1, 2);
+        assert!(bits.may(5) && bits.may(130) && !bits.may(6));
+        let write = q.due(u64::MAX, 8).into_iter().find(|d| d.0 == 5).unwrap().1;
+        // Done as another write: it stays in.
+        q.done(5, write + 1);
+        assert!(bits.may(5) && q.slots.contains_key(&5));
+        q.done(5, write);
+        assert!(!bits.may(5) && !q.slots.contains_key(&5));
+        assert!(q.remove_was(130) && !bits.may(130));
+        assert!(!q.remove_was(130));
+        q.written(130, 2, 0, false);
+        q.remove(130);
+        assert!(!bits.may(130) && q.slots.is_empty());
+        assert!(bits.may(10_000) && MayHold::default().may(3));
+    }
+
+    /// A placed texture's view sets a slot's bits, a write of no view there
+    /// clears them with what the queue and the spans held of it, and a
+    /// second such write finds nothing to take out.
+    #[test]
+    fn a_slot_left_by_its_texture_has_its_bits_cleared() {
+        let Some(heap) = HostHeap::new(false, 8) else {
+            return; // no host GPU
+        };
+        // 64x64 BC7, one mip, at an address no other test uses.
+        let at = 0x7fe3_0000_0000u64;
+        let mut desc = [0u32; 16];
+        (desc[10], desc[11]) = (at as u32, (at >> 32) as u32);
+        let view = View::Placed(false, [3, 0, 0, 0, 64, 0, 64, 0x1_0001, 98, 1, 0, 0x105, 0, 0], desc);
+        assert!(!heap.queued.may(2) && !heap.spanned.may(2));
+        assert!(heap.note_buffer(2, Some(&view), false).is_empty());
+        assert!(heap.queued.may(2) && heap.spanned.may(2));
+        assert_eq!(heap.texture_slots_due(u64::MAX, 8).0.len(), 1);
+        for _ in 0..2 {
+            assert!(heap.note_buffer(2, None, false).is_empty());
+            assert!(!heap.queued.may(2) && !heap.spanned.may(2));
+            assert!(heap.texture_slots_due(u64::MAX, 8).0.is_empty());
+            let placed = heap.placed.lock().unwrap();
+            assert!(!placed.by_slot.contains_key(&2) && !placed.first.contains_key(&2));
+        }
     }
 
     /// Memory the runtime maps under a slot's texture makes the slot due

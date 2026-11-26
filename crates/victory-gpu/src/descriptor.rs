@@ -561,6 +561,16 @@ pub(crate) fn sync_line(frames: f64) {
     let [pages, looked, mirrored, micros, tabled, later, waited] = [0, 1, 2, 3, 4, 5, 6].map(|i| SYNCED[i].swap(0, std::sync::atomic::Ordering::Relaxed));
     let split = [0, 1, 2, 3, 4].map(|i| SYNC_SPLIT[i].swap(0, std::sync::atomic::Ordering::Relaxed) as f64);
     let kinds = [0, 1, 2, 3, 4].map(|i| SYNCED_KINDS[i].swap(0, std::sync::atomic::Ordering::Relaxed) as f64 / frames);
+    #[cfg(feature = "diagnostics")]
+    {
+        let [queue, tabled, spans] = [0, 1, 2].map(|i| host::SLOT_BITS[i].swap(0, std::sync::atomic::Ordering::Relaxed) as f64 / frames);
+        if queue + tabled + spans > 0.0 {
+            tracing::info!(
+                "slot bits (VICTORY_SLOT_BITS): per frame, takes of the textures queue's lock left out {queue:.0} for writes \
+                 and {tabled:.0} for tables' reads, takes of the spans' lock left out {spans:.0}"
+            );
+        }
+    }
     if pages == 0 {
         return;
     }
