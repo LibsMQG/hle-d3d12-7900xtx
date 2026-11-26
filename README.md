@@ -19,6 +19,7 @@ pre-commit hook (`cargo xtask install-hooks`).
 | GPU | AMD Radeon RX 7900 XTX, 24 GB |
 | CPU | AMD Ryzen 9 5900X |
 | RAM | 32 GB DDR4-3600 |
+| OS | Windows 11 Pro |
 
 ## Where it stands (2026-11-26)
 
