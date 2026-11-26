@@ -646,10 +646,10 @@ mod tests {
             outputs: &[element(0, 0, 4), element(1, 0, 4)],
             prims: &[],
             mesh: None,
+            geometry: None,
             bindings: &[],
             threads: [0; 3],
             wave_size: None,
-            valver_1_8: false,
         });
         let strings = b"\0TEXCOORD\0TEXCOORD\0\0";
         assert_eq!(bytes[56..60], (strings.len() as u32).to_le_bytes());
