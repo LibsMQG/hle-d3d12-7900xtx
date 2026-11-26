@@ -30,6 +30,8 @@ mod faultbook;
 mod cores;
 #[cfg(windows)]
 mod cpu_stats;
+#[cfg(windows)]
+mod mem_owners;
 pub mod descriptor;
 pub mod device;
 #[cfg(windows)]
@@ -118,6 +120,18 @@ pub fn switched(switch: &str) -> Option<bool> {
 #[cfg(all(windows, feature = "diagnostics"))]
 pub fn frame_phase() -> u32 {
     copystat::phase()
+}
+#[cfg(all(windows, feature = "diagnostics"))]
+mod changed;
+/// The title reserved `[at, at + size)` asking for protection `protect`,
+/// the console's bits included: kept by diagnostics builds only
+/// (`VICTORY_CHANGED_BYTES`).
+#[cfg(windows)]
+pub fn title_memory_reserved(at: usize, size: usize, protect: u32) {
+    #[cfg(feature = "diagnostics")]
+    changed::reserved(at, size, protect);
+    #[cfg(not(feature = "diagnostics"))]
+    let _ = (at, size, protect);
 }
 #[cfg(windows)]
 pub use inplace::{title_memory_freeing, title_memory_section, title_memory_section_gone, title_memory_view};

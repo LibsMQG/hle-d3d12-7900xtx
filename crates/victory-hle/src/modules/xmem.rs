@@ -180,6 +180,11 @@ pub extern "system" fn XMemVirtualAlloc(
     if !at.is_null() && !placeholder {
         victory_gpu::title_memory_allocated(at as usize, size);
     }
+    // A new reservation, for the GPU side's per-area counts (diagnostics,
+    // `VICTORY_CHANGED_BYTES`), with what the title asked for.
+    if base.is_null() && !at.is_null() {
+        victory_gpu::title_memory_reserved(at as usize, size, asked);
+    }
     note_protection(asked, kind, flags, at as usize, size);
     at
 }

@@ -4218,6 +4218,12 @@ impl Shadow {
         let (from, to) = (from.max(start), to.min(end));
         // SAFETY: inside the mapping (`from` and `to` are within the buffer).
         let at = unsafe { self.data.add(from - start) };
+        // `VICTORY_CHANGED_BYTES`: how much of what is copied differs from
+        // what the copy holds (diagnostics builds; counting only).
+        #[cfg(feature = "diagnostics")]
+        if crate::changed::on() && from < to {
+            crate::changed::before_copy(at, from, to - from, self.card.is_some());
+        }
         if self.card.is_some() && from < to && crate::host::upcheck::on() {
             for_pieces_of(from - start, to - start, |a, b| {
                 let was = self.card_held(a, b - a);

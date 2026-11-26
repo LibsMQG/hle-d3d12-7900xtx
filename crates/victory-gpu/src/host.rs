@@ -8936,6 +8936,7 @@ impl Host {
         }
     }
 
+    #[track_caller]
     pub(crate) fn upload_buffer(&self, size: u64) -> Option<(ID3D12Resource, *mut u8)> {
         MADE[0].fetch_add(1, Ordering::Relaxed);
         MADE[1].fetch_add(size, Ordering::Relaxed);
@@ -8980,6 +8981,9 @@ impl Host {
             && let Some(b) = &buffer
         {
             crate::book::made(b, || "an upload buffer".into());
+        }
+        if made.is_ok() {
+            crate::mem_owners::upload(data.cast_const().cast(), size, std::panic::Location::caller());
         }
         match made {
             Ok(()) => Some((buffer?, data.cast())),
@@ -9849,6 +9853,7 @@ impl Host {
     /// it is fast too) and shaders read and write: for host copies of title
     /// memory that shaders write, which upload memory cannot be. Starts in
     /// the common state (buffers move out of it implicitly).
+    #[track_caller]
     pub(crate) fn shared_buffer(&self, size: u64) -> Option<(ID3D12Resource, *mut u8)> {
         MADE[2].fetch_add(1, Ordering::Relaxed);
         MADE[3].fetch_add(size, Ordering::Relaxed);
@@ -9897,6 +9902,9 @@ impl Host {
             && let Some(b) = &buffer
         {
             crate::book::made(b, || "a shared buffer".into());
+        }
+        if made.is_ok() {
+            crate::mem_owners::shared(data.cast_const().cast(), size, std::panic::Location::caller());
         }
         match made {
             Ok(()) => Some((buffer?, data.cast())),
@@ -11073,3 +11081,31 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at 
     }
 }
 
+#[cfg(test)]
+mod mem_owners_tests {
+    /// On a host: `VICTORY_MEM_OWNERS`. Off, an upload buffer is not
+    /// recorded; on, it is, under the block Windows says holds it and the
+    /// line that asked for it; the report runs and names the host lists.
+    #[test]
+    fn upload_buffers_are_recorded_under_their_block_only_when_asked() {
+        let Some(host) = super::host() else {
+            return; // no host GPU here
+        };
+        let forced = |on: bool| crate::mem_owners::FORCED.store(on, std::sync::atomic::Ordering::Relaxed);
+        forced(false);
+        let (_off, at_off) = host.upload_buffer(1 << 20).unwrap();
+        let off_line = line!() - 1;
+        assert!(crate::mem_owners::recorded_at(at_off as usize).iter().all(|(site, _)| site.line() != off_line), "off: not recorded");
+        forced(true);
+        let (_on, at_on) = host.upload_buffer(1 << 20).unwrap();
+        let here = line!() - 1;
+        let sites = crate::mem_owners::recorded_at(at_on as usize);
+        let report = crate::mem_owners::report();
+        forced(false);
+        assert!(
+            sites.iter().any(|(site, n)| site.file().ends_with("host.rs") && site.line() == here && *n >= 1),
+            "on: recorded with its site: {sites:?}"
+        );
+        assert!(report.contains("host lists alive"), "{report}");
+    }
+}
