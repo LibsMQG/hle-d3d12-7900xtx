@@ -55,6 +55,13 @@ if ($RX7900XT) {
     # a texture sent again (free roam: walking's slowest tenth 7.7 -> 14.1 fps).
     $settings.VICTORY_POOL_DISCARD = '1'; $settings.VICTORY_FILL_TITLE = '1'
     $settings.VICTORY_PARTIAL_DELTA = '1'
+    # Renderer ports 1 and 5: the title's 32-bit graphics heap (its 174 MB
+    # ring of constants) read and written by the card where the title has it,
+    # and constant buffers read in place as raw bytes. The submitting thread
+    # worked 60-63 ms a frame against 76-78 (jail, standing, two runs). Port 5
+    # changes the translation: the first run after it starts from a cold
+    # shader cache (`victory shaders`, then `victory warm --used --jobs 4`).
+    $settings.VICTORY_PORT_CONSTANTS = '1'; $settings.VICTORY_PORT_CBV = '1'
 }
 foreach ($k in $More.Keys) { $settings[$k] = $More[$k] }
 
