@@ -462,10 +462,9 @@ impl Cond {
             (Op::Le, n)
         } else if let Some(n) = rest.strip_prefix('>') {
             (Op::Gt, n)
-        } else if let Some(n) = rest.strip_prefix('<') {
-            (Op::Lt, n)
         } else {
-            return None;
+            let n = rest.strip_prefix('<')?;
+            (Op::Lt, n)
         };
         let n = n.trim().parse().ok()?;
         Some(Cond { text: text.to_owned(), op, n })

@@ -470,6 +470,7 @@ struct Reclaim {
 ///   copies it may take (its own idle times, unchanged) sparsest block first,
 ///   least recently used within a 1/32 occupancy step (copies of no block with
 ///   the sparsest): their blocks empty and go (2 kept above 85 % of the card).
+///
 /// Nothing live is moved.
 pub(crate) fn heap_pack() -> (bool, bool) {
     static ON: std::sync::OnceLock<(bool, bool)> = std::sync::OnceLock::new();

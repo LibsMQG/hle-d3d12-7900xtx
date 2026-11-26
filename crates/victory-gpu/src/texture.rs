@@ -295,7 +295,7 @@ pub(crate) fn alias(list: &HostList, placed: This, source: This) -> bool {
     // from the same card-written source satisfies this read (before: the
     // copy was skipped and the shader read the uploaded bytes, zero where the
     // card wrote packed light). Counted in [`ALIAS_AFTER_UPLOAD`].
-    let new_source = list.alias_source_changed(&to, &from);
+    let new_source = list.alias_source_changed(to, from);
     if new_source && !first {
         ALIAS_AFTER_UPLOAD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
@@ -2271,7 +2271,7 @@ mod allocation_costs {
                 seen.push(digest(&bytes));
             }
         }
-        let text: Vec<u8> = (0..400u32).map(|i| (i * 37 >> 2) as u8).collect();
+        let text: Vec<u8> = (0..400u32).map(|i| ((i * 37) >> 2) as u8).collect();
         for at in 0..399 {
             let mut bytes = text.clone();
             bytes.swap(at, at + 1);

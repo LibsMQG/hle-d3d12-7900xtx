@@ -917,6 +917,7 @@ mod tests {
         let kept = record(slot.as_ptr() as u64);
         slot[1] = 99;
         assert_eq!(kept[1], 2);
+        assert_ne!(kept[1], slot[1], "the record is a copy");
         assert_eq!(record(0), [0; RECORD]);
     }
 }

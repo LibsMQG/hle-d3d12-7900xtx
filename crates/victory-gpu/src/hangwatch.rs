@@ -179,7 +179,7 @@ pub(crate) fn start() {
 
 /// Progress: frames begun, draws run on the host (the fox base counts no
 /// presents of its own outside the host).
-#[cfg(windows)]
+#[cfg(all(windows, feature = "diagnostics"))]
 fn progress() -> (u64, u64) {
     (crate::frame::current(), crate::draw::drawn())
 }

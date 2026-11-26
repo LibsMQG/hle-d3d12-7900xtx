@@ -183,7 +183,7 @@ pub fn present_maybe<R>(do_not_wait: u32, present: impl FnOnce(u32) -> R) -> Opt
     match present_skip() {
         0 => Some(present(0)),
         1 => None,
-        n => (PRESENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % n == 0).then(|| present(do_not_wait)),
+        n => PRESENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed).is_multiple_of(n).then(|| present(do_not_wait)),
     }
 }
 
