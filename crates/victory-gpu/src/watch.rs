@@ -1755,6 +1755,20 @@ fn guard(start: usize, end: usize) -> Option<Vec<usize>> {
 /// copied a frame for them, 255 copies a frame reading around holes).
 /// `VICTORY_GUARD_HOLES=0` looks at the first address only, as before.
 fn is_view(start: usize, end: usize) -> bool {
+    let started = crate::cpu_stats::on().then(std::time::Instant::now);
+    let (mut calls, mut spanned) = (0u64, 0u64);
+    let answer = ask_whether_view(start, end, &mut calls, &mut spanned);
+    if let Some(started) = started {
+        use crate::cpu_stats::Query;
+        let who = if answer { Query::ViewYes } else { Query::ViewNo };
+        crate::cpu_stats::queried(who, calls, spanned, started);
+    }
+    answer
+}
+
+/// [`is_view`], noting the queries made and the bytes of the regions they
+/// answered with.
+fn ask_whether_view(start: usize, end: usize, calls: &mut u64, spanned: &mut u64) -> bool {
     use windows_sys::Win32::System::Memory::{
         MEM_COMMIT, MEM_MAPPED, MEMORY_BASIC_INFORMATION, VirtualQuery,
     };
@@ -1766,9 +1780,11 @@ fn is_view(start: usize, end: usize) -> bool {
         let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
         // SAFETY: a valid out pointer of the right size.
         let n = unsafe { VirtualQuery(at as *const _, &mut info, size_of_val(&info)) };
+        *calls += 1;
         if n == 0 {
             return false;
         }
+        *spanned += info.RegionSize as u64;
         if info.Type == MEM_MAPPED {
             return true;
         }
@@ -1953,8 +1969,12 @@ fn uncommitted_end(block: usize) -> usize {
     };
     // SAFETY: plain data filled in by the query.
     let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+    let started = crate::cpu_stats::on().then(std::time::Instant::now);
     // SAFETY: a valid out pointer of the right size.
     let n = unsafe { VirtualQuery((block * BLOCK) as *const _, &mut info, size_of_val(&info)) };
+    if let Some(started) = started {
+        crate::cpu_stats::queried(crate::cpu_stats::Query::Absent, 1, info.RegionSize as u64, started);
+    }
     if n != 0 && matches!(info.State, MEM_RESERVE | MEM_FREE) {
         (info.BaseAddress as usize).saturating_add(info.RegionSize) / BLOCK
     } else {

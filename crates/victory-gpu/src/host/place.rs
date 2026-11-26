@@ -114,7 +114,7 @@ pub(super) fn read_by(runs: &[&HostList], mut ranges: Vec<(usize, usize)>) -> bo
     join_ranges(&mut ranges, []);
     runs.iter().any(|list| {
         list.deferred().copies.iter().any(|step| match step {
-            &Step::Copy(_, src, len) | &Step::Fill(_, src, len, _) => touches(&ranges, src, src + len),
+            &Step::Copy(_, src, len) | &Step::Fill(_, src, len, _, _) => touches(&ranges, src, src + len),
             Step::Texture(staging) => {
                 let (at, len) = staging.memory();
                 touches(&ranges, at, at + len)

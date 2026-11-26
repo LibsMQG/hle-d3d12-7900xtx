@@ -2335,7 +2335,7 @@ enum Step {
     Copy(usize, usize, usize),
     /// A copy of title memory into the list's own upload memory, and how
     /// the card could bring the bytes instead.
-    Fill(usize, usize, usize, Option<card_steps::FillTo>),
+    Fill(usize, usize, usize, Option<card_steps::FillTo>, u8),
     /// Brings a range (address, bytes) of a buffer's host copy up to date:
     /// once per submission, whichever lists ask, until a `Copy` or `Run`
     /// intervenes.
@@ -2898,7 +2898,13 @@ fn late_blocked(runs: &[&HostList]) -> Option<usize> {
         }
         (line.written.clone(), card_steps::copies(&line))
     };
-    blocked_by(&written, runs, true).or_else(|| card_steps::copied_read(&copies, runs).then_some(WHY_READ))
+    blocked_by(&written, runs, true).or_else(|| {
+        let read = card_steps::copied_read(&copies, runs);
+        if read {
+            crate::cpu_stats::met(crate::cpu_stats::Reads::CardCopyRead, 0, 0);
+        }
+        read.then_some(WHY_READ)
+    })
 }
 
 /// Whether a small fill of upload memory, or copy of a title buffer, goes on without waiting for
@@ -3082,6 +3088,11 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
                     if let Some(_read) = copy_blocked(written, dst, src, len) {
                         if count {
                             LATE_STATS[15].fetch_add(1, Ordering::Relaxed);
+                            if _read {
+                                crate::cpu_stats::met(crate::cpu_stats::Reads::CopySource, src, len);
+                            } else {
+                                crate::cpu_stats::met(crate::cpu_stats::Reads::CopyDestination, dst, len);
+                            }
                             #[cfg(feature = "diagnostics")]
                             if _read {
                                 blame("a buffer copy's source", written, src, len);
@@ -3092,10 +3103,12 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
                         return Some(WHY_READ);
                     }
                 }
-                &Step::Fill(_, src, len, _) => {
+                &Step::Fill(_, src, len, _, from) => {
                     if read_blocked(written, src, len) {
                         if count {
                             LATE_STATS[16].fetch_add(1, Ordering::Relaxed);
+                            crate::cpu_stats::fill_waited(from);
+                            crate::cpu_stats::met(crate::cpu_stats::Reads::UploadFill { from }, src, len);
                             #[cfg(feature = "diagnostics")]
                             blame("a fill of upload memory", written, src, len);
                         }
@@ -3107,6 +3120,7 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
                     if touches(written, at, at + len) {
                         if count {
                             LATE_STATS[17].fetch_add(1, Ordering::Relaxed);
+                            crate::cpu_stats::met(crate::cpu_stats::Reads::Texture, at, len);
                             #[cfg(feature = "diagnostics")]
                             blame("a texture", written, at, len);
                         }
@@ -3117,6 +3131,7 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
                     if touches(written, at, at.saturating_add(len)) {
                         if count {
                             LATE_STATS[17].fetch_add(1, Ordering::Relaxed);
+                            crate::cpu_stats::met(crate::cpu_stats::Reads::MoviePlane, at, len);
                             #[cfg(feature = "diagnostics")]
                             blame("a movie plane", written, at, len);
                         }
@@ -3130,6 +3145,7 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
                     place::Waits::Yes => {
                         if count {
                             LATE_STATS[15].fetch_add(1, Ordering::Relaxed);
+                            crate::cpu_stats::met(crate::cpu_stats::Reads::PlacedCopy, p.src, p.len);
                             #[cfg(feature = "diagnostics")]
                             blame("a buffer copy at its place", written, p.src, p.len);
                         }
@@ -3140,7 +3156,12 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
             }
         }
     }
-    (!placed.is_empty() && place::read_by(runs, placed)).then_some(WHY_READ)
+    let first = *placed.first()?;
+    let read = place::read_by(runs, placed);
+    if read && count {
+        crate::cpu_stats::met(crate::cpu_stats::Reads::PlacedRead, first.0, first.1 - first.0);
+    }
+    read.then_some(WHY_READ)
 }
 
 /// With flights in the air, after the submission's write-watch asking:
@@ -3469,6 +3490,8 @@ fn late_threads() {
 fn relay_wait(why: usize, done: impl Fn(&Line) -> bool) {
     let mut line = line();
     if done(&line) {
+        drop(line);
+        crate::cpu_stats::not_waited();
         return;
     }
     LATE_STATS[1].fetch_add(1, Ordering::Relaxed);
@@ -3494,6 +3517,7 @@ fn relay_wait(why: usize, done: impl Fn(&Line) -> bool) {
     LATE_STATS[12].fetch_add(us, Ordering::Relaxed);
     LATE_WAITED[why.min(10)].fetch_add(us, Ordering::Relaxed);
     submission_us(1, us);
+    crate::cpu_stats::waited(why, waiting.elapsed());
     #[cfg(feature = "diagnostics")]
     blamed(why, us);
 }
@@ -5640,6 +5664,7 @@ impl Host {
         }
         #[cfg(feature = "diagnostics")]
         ahead.part(13);
+        crate::cpu_stats::say();
         // Descriptors the title copied into placed heaps directly, before
         // command lists that index those slots are submitted.
         let heaps_synced = crate::descriptor::begin_sync_heaps();
@@ -7004,7 +7029,8 @@ impl HostList {
     pub(crate) fn defer_fill(&self, dst: *mut u8, src: *const u8, len: usize) {
         self.deferred()
             .copies
-            .push(Step::Fill(dst as usize, src as usize, len, None));
+            .push(Step::Fill(dst as usize, src as usize, len, None, crate::cpu_stats::FILL_ROOT_VIEW));
+        crate::cpu_stats::fill_made(crate::cpu_stats::FILL_ROOT_VIEW);
     }
 
     /// The host address of `len` bytes of scratch memory that hold the title
@@ -7027,14 +7053,22 @@ impl HostList {
     pub(crate) fn defer_constants(&self, dst: *mut u8, src: *const u8, len: usize, slot: (usize, u32)) {
         self.deferred()
             .copies
-            .push(Step::Fill(dst as usize, src as usize, len, Some(card_steps::FillTo::Slot(slot.0, slot.1))));
+            .push(Step::Fill(
+                dst as usize,
+                src as usize,
+                len,
+                Some(card_steps::FillTo::Slot(slot.0, slot.1)),
+                crate::cpu_stats::FILL_TABLE_CONSTANTS,
+            ));
+        crate::cpu_stats::fill_made(crate::cpu_stats::FILL_TABLE_CONSTANTS);
     }
 
     /// As [`HostList::defer_fill`], for the beginning of a buffer
     /// [`HostList::upload`] made.
     pub(crate) fn defer_fill_buffer(&self, buffer: &ID3D12Resource, dst: *mut u8, src: *const u8, len: usize) {
         let to = (card_steps::stage() > 1).then(|| card_steps::FillTo::Buffer(buffer.clone()));
-        self.deferred().copies.push(Step::Fill(dst as usize, src as usize, len, to));
+        self.deferred().copies.push(Step::Fill(dst as usize, src as usize, len, to, crate::cpu_stats::FILL_TEXTURE_COPY));
+        crate::cpu_stats::fill_made(crate::cpu_stats::FILL_TEXTURE_COPY);
     }
 
     /// Brings `[address, address + len)` of a buffer's host copy up to date
@@ -7487,7 +7521,7 @@ impl HostList {
                     }
                     (started, len)
                 }
-                &Step::Fill(dst, src, len, _) => {
+                &Step::Fill(dst, src, len, _, _) => {
                     #[cfg(feature = "diagnostics")]
                     {
                         copies += 1;

@@ -427,7 +427,7 @@ fn does_of(written: &[(usize, usize)], runs: &[&HostList]) -> (Vec<Does>, Vec<(u
                     len,
                     asked: copy_blocked(written, dst, src, len).is_some(),
                 },
-                Step::Fill(_, src, len, to) => Does::Fill {
+                Step::Fill(_, src, len, to, _) => Does::Fill {
                     src: *src,
                     len: *len,
                     asked: read_blocked(written, *src, *len),
@@ -513,7 +513,7 @@ type HashMap<K, V> = std::collections::HashMap<K, V, std::hash::BuildHasherDefau
 fn fill_to(runs: &[&HostList], step: (usize, usize)) -> Option<FillTo> {
     let list = runs.iter().find(|l| std::ptr::from_ref::<HostList>(l) as usize == step.0)?;
     match list.deferred().copies.get(step.1)? {
-        Step::Fill(_, _, _, to) => to.clone(),
+        Step::Fill(_, _, _, to, _) => to.clone(),
         _ => None,
     }
 }
@@ -658,6 +658,7 @@ impl Host {
     /// ([`stage`]), the list that does them. `None` if nothing is in the
     /// way or the old wait is due. Under the submission lock.
     pub(super) fn card_steps(&self, runs: &[&HostList]) -> Option<Taken> {
+        crate::cpu_stats::card_steps_begin();
         if stage() == 0 || !relay_exact() {
             return None;
         }
@@ -675,9 +676,15 @@ impl Host {
             self.take_steps(&written, runs)
         };
         match taken {
-            Ok(taken) => taken,
+            Ok(taken) => {
+                if taken.is_none() {
+                    crate::cpu_stats::card_refused(crate::cpu_stats::NOTHING_CHOSEN);
+                }
+                taken
+            }
             Err(why) => {
                 DONE[3].fetch_add(1, Ordering::Relaxed);
+                crate::cpu_stats::card_refused(why);
                 #[cfg(feature = "diagnostics")]
                 refused(why);
                 let _ = why;
