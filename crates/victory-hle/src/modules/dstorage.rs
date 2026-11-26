@@ -877,8 +877,17 @@ fn work(scheduler: &'static Scheduler) {
     }
 }
 
+/// `VICTORY_DISK_STATS=1` (off by default, counting only): the 5-second
+/// read report ([`Lanes::count`]: requests, MB/s from disk, workers busy,
+/// BCPack) is logged at info instead of debug.
+fn disk_stats() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_DISK_STATS").is_some_and(|v| v == "1"))
+}
+
 impl Lanes {
-    /// Counts a finished request; every 5 s a debug line sums them up.
+    /// Counts a finished request; every 5 s a debug line sums them up
+    /// (info with [`disk_stats`]).
     fn count(&mut self, job: &Job, started: std::time::Instant) {
         let (requests, bytes, busy) = &mut self.done;
         *requests += 1;
@@ -893,18 +902,30 @@ impl Lanes {
         if elapsed.as_secs() >= 5 {
             let waiting: usize = self.lanes.values().map(|l| l.reads.len()).sum();
             let reading = READING.swap(0, Ordering::Relaxed) as f64 / 1e9;
-            tracing::debug!(
-                requests = *requests,
-                mb_per_s = format_args!("{:.1}", *bytes as f64 / elapsed.as_secs_f64() / 1e6),
-                busy_workers = format_args!("{:.2}", busy.as_secs_f64() / elapsed.as_secs_f64()),
-                reading_workers = format_args!("{:.2}", reading / elapsed.as_secs_f64()),
-                staging_waits = std::mem::take(&mut self.refused),
-                bcpack_mb = self.bcpack.0 / 1_000_000,
-                bcpack_workers = format_args!("{:.2}", self.bcpack.1.as_secs_f64() / elapsed.as_secs_f64()),
-                waiting,
-                "dstorage: last {:.1} s",
-                elapsed.as_secs_f64()
-            );
+            let staging_waits = std::mem::take(&mut self.refused);
+            // `VICTORY_DISK_STATS=1`: at info, so a release build (which
+            // logs nothing below info) says it too.
+            macro_rules! report {
+                ($level:ident) => {
+                    tracing::$level!(
+                        requests = *requests,
+                        mb_per_s = format_args!("{:.1}", *bytes as f64 / elapsed.as_secs_f64() / 1e6),
+                        busy_workers = format_args!("{:.2}", busy.as_secs_f64() / elapsed.as_secs_f64()),
+                        reading_workers = format_args!("{:.2}", reading / elapsed.as_secs_f64()),
+                        staging_waits,
+                        bcpack_mb = self.bcpack.0 / 1_000_000,
+                        bcpack_workers = format_args!("{:.2}", self.bcpack.1.as_secs_f64() / elapsed.as_secs_f64()),
+                        waiting,
+                        "dstorage: last {:.1} s",
+                        elapsed.as_secs_f64()
+                    )
+                };
+            }
+            if disk_stats() {
+                report!(info);
+            } else {
+                report!(debug);
+            }
             self.done = Default::default();
             self.bcpack = Default::default();
             self.since = None;
