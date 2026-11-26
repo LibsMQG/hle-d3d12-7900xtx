@@ -1,0 +1,19 @@
+[package]
+name = "d3dprobe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Same versions as the runtime's Cargo.lock; nothing else.
+[dependencies]
+windows = { version = "=0.62.2", features = [
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_System_Memory",
+    "Win32_System_ProcessStatus",
+] }
+
+[workspace]
