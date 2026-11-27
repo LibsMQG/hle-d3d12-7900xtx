@@ -364,12 +364,41 @@ pub(crate) fn fresh() -> AtomicU8 {
 mod tests {
     use super::*;
 
+    /// The two tests share the copy queue and what is on its way (`drain`
+    /// waits for, and counts, every upload there): one at a time.
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        static SERIAL: Mutex<()> = Mutex::new(());
+        SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// `claim` turned `texture` down. For what holds for the whole process
+    /// just then, which other tests change (uploads stopped after an
+    /// allocation failed for memory, too little commit left), or a texture no
+    /// longer made in the last second, the test has nothing to look at and
+    /// ends here; anything else fails, saying what held for the texture.
+    fn turned_down(texture: This, copy: &HostTexture) {
+        let refused = crate::residency::upload_refused();
+        let growth = crate::residency::allow_staging_growth(false);
+        let fresh = crate::pool::fresh(&copy.texture);
+        if refused || !growth || !fresh {
+            eprintln!("uploads turned down just then (refused {refused}, growth {growth}, fresh {fresh}); skipped");
+            return;
+        }
+        panic!(
+            "not taken: ahead {}, host wrote {}, alias {}",
+            copy.ahead.load(Relaxed),
+            crate::texture::host_wrote(texture as usize),
+            crate::resource::alias_of(texture).is_some()
+        );
+    }
+
     /// The texels of a placed texture arrive by the copy queue, all levels of
     /// them, and what waits for them is called then; a second asking finds the
     /// first on its way, and a later one is the list's.
     #[test]
     fn a_placed_texture_is_filled_ahead_of_the_lists() {
         use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc};
+        let _serial = serial();
         let Some(host) = crate::host::host() else { return };
         // 256x256 BC7, nine levels.
         let desc = [3u32, 0, 0, 0, 256, 0, 256, 0x9_0001, 98, 1, 0, 0x105, 0, 0];
@@ -385,7 +414,11 @@ mod tests {
             return;
         }
         assert!(!there(texture));
-        let Some(Taken::New(job)) = claim(texture, 0, u64::MAX) else { panic!("not taken") };
+        let Some(taken) = claim(texture, 0, u64::MAX) else {
+            turned_down(texture, &copy);
+            return;
+        };
+        let Taken::New(job) = taken else { panic!("not taken") };
         let (told, heard) = std::sync::mpsc::channel();
         let also = told.clone();
         let Some(Taken::Known(same)) = claim(texture, 0, u64::MAX) else { panic!("not known") };
@@ -448,6 +481,7 @@ mod tests {
     fn drain_waits_until_then_callbacks_have_run() {
         use std::sync::atomic::AtomicBool;
         use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc};
+        let _serial = serial();
         let Some(_host) = crate::host::host() else { return };
         let desc = [3u32, 0, 0, 0, 128, 0, 128, 0x8_0001, 98, 1, 0, 0x105, 0, 0];
         let whole = crate::resource::placed_bytes(&desc).unwrap() as usize;
@@ -461,12 +495,18 @@ mod tests {
         if !crate::pool::fresh(&copy.texture) {
             return;
         }
-        let Some(Taken::New(job)) = claim(texture, 0, u64::MAX) else { panic!("not taken") };
+        let Some(taken) = claim(texture, 0, u64::MAX) else {
+            turned_down(texture, &copy);
+            return;
+        };
+        let Taken::New(job) = taken else { panic!("not taken") };
         let ran = Arc::new(AtomicBool::new(false));
         let flag = ran.clone();
         job.then(move || flag.store(true, std::sync::atomic::Ordering::Release));
         send(&job);
-        assert!(drain() >= 1);
+        // 0 when the upload landed before the call: nothing left to wait for.
+        let waited = drain();
+        assert!(waited <= 1, "drain() waited for {waited} uploads; only this test's is on its way");
         assert!(ran.load(std::sync::atomic::Ordering::Acquire), "job.then callback must run before drain() returns");
         assert_eq!(drain(), 0);
     }
