@@ -1634,18 +1634,36 @@ pub(crate) fn wide_each(n: usize, work: impl Fn(usize) + Send + Sync + 'static) 
     wide(jobs);
 }
 
-/// About this many bytes to a piece of work for [`wide`]: 256 KiB, so the
-/// usual 1.5-2 MB of one submission's snapshots and card sends spread over
-/// all workers. `VICTORY_WIDE_SMALL=0`: [`WIDE_JOB_LARGE`], as before (with
-/// `VICTORY_AB` naming it, on and off while the title runs).
-const WIDE_JOB: usize = 256 << 10;
+/// About this many bytes to a piece of work for [`wide`].
+const WIDE_JOB: usize = 1 << 20;
 
-/// [`WIDE_JOB`] before it was made smaller.
-const WIDE_JOB_LARGE: usize = 1 << 20;
+/// With `VICTORY_WIDE_SMALL=1` (off by default; with `VICTORY_AB` naming it,
+/// on and off while the title runs): pieces of work of this many bytes
+/// instead, so one submission's 1.5-2 MB of snapshots and card sends spread
+/// over all workers. Measured worse on a 12-core CPU (jail, standing, 23
+/// phases of one run): frames 1.2-1.6 ms longer and the card idle 1.5 ms
+/// longer, although snapshots took 0.4 ms less.
+const WIDE_JOB_SMALL: usize = 256 << 10;
 
 /// The bytes of a piece of work for [`wide`] now.
 fn wide_job() -> usize {
-    if crate::toggled!("VICTORY_WIDE_SMALL") { WIDE_JOB } else { WIDE_JOB_LARGE }
+    // Off unless `1`, as `titlewrite`'s `asked_for!`.
+    static SMALL: std::sync::OnceLock<Result<bool, u32>> = std::sync::OnceLock::new();
+    let small = SMALL.get_or_init(|| {
+        #[cfg(feature = "diagnostics")]
+        if let Some(bit) = crate::ab::bit("VICTORY_WIDE_SMALL") {
+            return Err(bit);
+        }
+        Ok(std::env::var_os("VICTORY_WIDE_SMALL").is_some_and(|v| v == "1"))
+    });
+    let small = match *small {
+        Ok(on) => on,
+        #[cfg(feature = "diagnostics")]
+        Err(bit) => crate::ab::on(bit),
+        #[cfg(not(feature = "diagnostics"))]
+        Err(_) => false,
+    };
+    if small { WIDE_JOB_SMALL } else { WIDE_JOB }
 }
 
 /// With [`wide_back`]: the snapshots noted while a submission is prepared
