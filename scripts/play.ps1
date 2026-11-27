@@ -136,16 +136,20 @@ if ($Tuned) {
     # before ports 6 and SOFT_VIEWS were on in this preset.)
     $settings.VICTORY_SKIP_WC_BACK = '1'
     # On a processor with two or more last-level caches of one size (a Ryzen
-    # with two core complexes), our own threads (submitting, relay, landing,
-    # list translators, ...) prefer the cores without processor 0, where the
-    # title pins its threads (adapted from motioncsgo's patch in
-    # avatarmanz/VIctory-7900XTX issue 399). In-run A/B on a Ryzen 9 5900X
-    # (jail, standing, 18 pairs of 20 s phases): frames -3.3% (median against
-    # the OFF neighbours), p90 -5.0%, lower in 17 of 18; the submitting
-    # thread's work 55.1 -> 53.0 ms a frame. Nothing changes on one complex,
-    # X3D or two kinds of cores. (Measured on main 1c479b29, before
-    # SKIP_WC_BACK was on in this preset.)
-    $settings.VICTORY_CCD = 'far'
+    # with two core complexes), our own threads are placed by core complex
+    # (adapted from motioncsgo's patch in avatarmanz/VIctory-7900XTX issue
+    # 399): near keeps the submitting thread and its helpers beside the
+    # title's threads, on the cache with processor 0 where the title pins
+    # them, and sends only the list translators to the other complex; far
+    # sends all of ours there. In-run A/B on a Ryzen 9 5900X, median against
+    # the OFF neighbours: far against none (jail, standing, 18 pairs of 20 s
+    # phases, main 1c479b29): frames -3.3%, p90 -5.0%, lower in 17 of 18.
+    # Near against far (main daef5bd3, this preset): standing in the jail, 12
+    # pairs: -1.5%, p90 -6.6%, lower in 10 of 12; driving, 5 pairs: -14.8%,
+    # p90 -13.7%, lower in 4 of 5 (the title's waits at presents -35%, list
+    # translation -12%; the submitting thread works 11-18% more beside the
+    # title). Nothing changes on one complex, X3D or two kinds of cores.
+    $settings.VICTORY_CCD = 'near'
 }
 foreach ($k in $More.Keys) { $settings[$k] = $More[$k] }
 
