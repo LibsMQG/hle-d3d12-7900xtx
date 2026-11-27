@@ -14,6 +14,9 @@
 # -RamGB        with -Tuned: size memory kept in place as for this much RAM (default: this PC's)
 # -SkipMovies   skips the opening movies (off by default): once (logos and intros), all (looping
 #               menu backgrounds too, which then stay dark); VICTORY_SKIP_BINK
+# -Fps          frames a second for light frames, those of at most 500 draws (videos, loading
+#               screens, the pause menu, the map), in place of the title's 30; 0 for no limit.
+#               The world stays at the title's 30. Off by default; VICTORY_FPS
 # -List         only print the settings this line would start with, and stop
 # -More         other settings: -More @{VICTORY_PANEL='1'}
 # Run it from a normal window, not as administrator: the driver then keeps its shader cache elsewhere.
@@ -28,6 +31,7 @@ param(
     [switch]$List,
     [ValidateSet('once', 'all')][string]$SkipMovies = '',
     [ValidateSet('diag', 'release')][string]$Build = 'diag',
+    [ValidatePattern('^\d{0,4}$')][string]$Fps = '',
     [hashtable]$More = @{}
 )
 # VICTORY_CARD_AWAKE (the card's clocks kept up between submissions, host/awake.rs) is
@@ -46,6 +50,7 @@ if ($Safe) {
 }
 if ($RayTracing) { $settings.VICTORY_BVH_BUILDER = '1' }
 if ($SkipMovies) { $settings.VICTORY_SKIP_BINK = $(if ($SkipMovies -eq 'all') { 'all' } else { '1' }) }
+if ($Fps) { $settings.VICTORY_FPS = $Fps }
 if ($RX7900XTX) { $Tuned = $true }
 $machine = ''
 if ($Tuned) {

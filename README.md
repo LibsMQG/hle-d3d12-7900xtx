@@ -79,6 +79,7 @@ title's own output resolution, no frame generation, ray-traced light off.
 | 2026-11-27 | Descriptor records compared in place, dynamic bits, prelude pool: **64.7 ms (15.5 fps)**, submitting thread 48 ms, GPU at 199 W instead of the base's 273 W ([Results at a glance](#results-at-a-glance)). |
 | 2026-11-27 | Renderer port 6 on (guards' lock waits 26.4 -> 4.0 ms a frame, frames -2.6 %); `VICTORY_SOFT_VIEWS=copies` (driving: slow frames about halved, p99 457 -> 271 ms). |
 | 2026-11-27 | Write-combined memory of 1 MiB and over kept on the card (`VICTORY_SKIP_WC_BACK`, from klbf-lab): **about 54 ms (18.4 fps)**, submitting thread ~36 ms, the card waiting for it 22.5 -> 10.0 ms a frame; then `VICTORY_CCD` (our threads placed by core complex): far -3.3 %, near another -1.5 % standing and -14.8 % driving. |
+| 2026-11-27 | Light frames above 30 a second (`play.ps1 -Fps 60`): loading screens 30 -> 59 fps, the pause menu about 55, the map 30 -> 42-50, at their normal speed; the world stays at the title's 30. |
 
 Moving fast through the world is still far slower (driving: median about 77 ms, p99 about 240 ms,
 with everything in `-Tuned` on before `VICTORY_CCD=near`, which took another 14.8 % off the
@@ -100,6 +101,7 @@ Every commit taken from elsewhere keeps its author and, where it was a cherry-pi
 | [avatarmanz/VIctory-7900XTX issue 399](https://github.com/avatarmanz/VIctory-7900XTX/issues/399) | A patch posted by motioncsgo in that fork's issues | **`VICTORY_CCD`** (adapted to this tree's simpler thread placement): on a processor with two or more last-level caches of one size (a Ryzen with two core complexes), our own threads are placed by core complex: `far` puts them all on the cores without processor 0, where the title pins its threads; `near` keeps the submitting thread and its helpers beside the title and sends only the list translators away. In-run A/B on a Ryzen 9 5900X: far against none -3.3% (18 pairs of 20 s phases, standing, p90 -5.0%, lower in 17 of 18); near against far -1.5% standing (p90 -6.6%, lower in 10 of 12 pairs) and -14.8% driving (lower in 4 of 5). `near` is on in `-Tuned`; nothing changes on one complex, X3D or two kinds of cores. Its `VICTORY_LANE_CORE` part (the submitting thread on a core of its own) was ported and measured on top of it: no gain here (+0.4%), so not taken. |
 | [PastiiJay/klbf-lab](https://github.com/PastiiJay/klbf-lab) | Community fork that gathers fixes from others, among them fxceless/victory-fork pull requests | **`VICTORY_SKIP_WC_BACK=1`** (fxceless/victory-fork #868 by Chipsraine, reservation fix by iGoldenNinja, 1 MiB gate from #1268 by Proudnoob4): what shaders write to title memory reserved write-combined (written by its CPU, never read back) is no longer fetched back from the card's copy, for buffers of 1 MiB and over (the small ones are, since skipping them left rooms dark). In-run A/B (standing, 12 pairs): frames 70.1 -> 54.4 ms (-22.9 % median), the submitting thread's work 55.2 -> 35.8 ms; in drives no errors and no picture defect from it. On in `-Tuned`. Also two fixes, on: dynamic descriptor slots go back only to the heap that took them; a page the title guards itself keeps its guard. And `VICTORY_OUTPUT=<w>x<h>` / `VICTORY_RENDER_SCALE` (off). Its movie skip was left out (`VICTORY_SKIP_BINK` already does it). |
 | [zeex64/victory-7900xtx](https://github.com/zeex64/victory-7900xtx) | Fork on the upstream line, run under Linux/Proton | **`VICTORY_SYNC_IN_PLACE`** (ported, adapted to port 2's parts): the heaps' descriptor records read where they are and compared with AVX2 as read, in place of a copy of each changed page first. Reading and comparing 4.6 -> 3.3 ms a frame, the submitting thread's wait for it -0.4 ms. On in `-Tuned`. Its other speed switches were already here (`VICTORY_SLOT_BITS`) or turned off by its own measurements; its Linux and Wine work does not apply. |
+| [eikkapine/victory-amd](https://github.com/eikkapine/victory-amd) | AMD fork with a frame-rate patch of the title and frame generation | **The title's frame rate** (`VICTORY_TITLE_FPS=N`, off): the title's reads of its frame-rate setting give N, so its frame time, frame interval, own limiter and the shortest step of its simulation follow it, the world too. With our `VICTORY_FPS` alone only the shortest step follows, so light frames above 30 keep game time to the wall clock (measured: 989-1012 ms of game time a second at 42-59 fps). And `VICTORY_TIMER_LOG=1` (diagnostics build): the title's timers once a second. Its own frame-clock override and fps cap were left out (ours do the same); its frame generation needs AMD libraries that are not in the repository. |
 | [WillyboPeep/victory-all-forks](https://github.com/WillyboPeep/victory-all-forks) | A merge of many community forks | **Correctness fixes**, not speed: use-after-free in audio, queues and fences; save-data validation; loader, GPU, shader-recompiler and DirectStorage fixes; frame-wait ticks; Bink skip. Full list under [Fixes taken from others](#fixes-taken-from-others). |
 | [VIctory](https://github.com/Marvisak/VIctory) | The upstream project | Through all of the above. One idea re-written by us: a submission's one asking holds every range over both its parts (after upstream `e000e02`). |
 
@@ -174,6 +176,13 @@ the card, one after the other), not by RAM or VRAM traffic; port 2's real misses
 - **The host GPU is made before the title starts** (`VICTORY_HOST_EARLY`, on): the title's own
   30 s start-up watchdog no longer ends the run while AMD's driver reads its pipeline cache in
   `D3D12CreateDevice` (5 of 46 starts ended this way before).
+- **Light frames above 30 a second** (`play.ps1 -Fps 60`, `VICTORY_FPS`; off by default): after
+  8 frames in a row of at most 500 draws (videos, loading screens, the pause menu, the map), a
+  frame is held only to 1/N s instead of the title's 33.3 ms ticks. The title's own frame limiter
+  (`QueryPerformanceCounter` and `Sleep(2)` against its frame interval, on in the world too) is let
+  through for those frames, and its simulation's shortest step follows N (the victory-amd fork's
+  frame-rate patch), so game time keeps to the wall clock. Loading screens 30 -> 59 fps, the
+  pause menu about 55, the map 30 -> 42-50; the world and the menus drawn over it stay at 30.
 - **One fix reverted**: the quad-read derivative change from the all-forks merge was taken out
   again on this tree.
 - **CI**: clippy clean with `-D warnings` in both CI variants; tests that share global state
@@ -269,6 +278,8 @@ authors.
   and Proudnoob4 (fxceless/victory-fork #868 and #1268) for `VICTORY_SKIP_WC_BACK`.
 - **motioncsgo**, for the thread placement on processors with two core complexes (`VICTORY_CCD`,
   from the patch in [avatarmanz/VIctory-7900XTX issue 399](https://github.com/avatarmanz/VIctory-7900XTX/issues/399)).
+- **[eikkapine/victory-amd](https://github.com/eikkapine/victory-amd)** by eikkapine, for the
+  title's frame-rate patch (`VICTORY_TITLE_FPS`, the simulation's shortest step) and `VICTORY_TIMER_LOG`.
 - **[VIctory](https://github.com/Marvisak/VIctory)** by Marvisak and its contributors.
 - **[WillyboPeep/victory-all-forks](https://github.com/WillyboPeep/victory-all-forks)**, a merge of
   community forks, where the fixes taken here were found, by AscilCH, C-GDev, David, DocBlack89,
