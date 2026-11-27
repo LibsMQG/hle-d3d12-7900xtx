@@ -168,6 +168,10 @@ pub fn run(
         let size = image.info().size_of_image as usize;
         // SAFETY: the image stays mapped, and nothing of it has run yet.
         unsafe { victory_loader::write_sites::apply_asked(&image_name, image.base(), size) };
+        // The title's output size and render scale (VICTORY_OUTPUT, VICTORY_RENDER_SCALE;
+        // off without them), from avatarmanz/VIctory-7900XTX.
+        // SAFETY: the image stays mapped and nothing of it has run yet.
+        unsafe { victory_loader::resolution::apply_asked(image.base(), size) };
     }
     // Renderer port #2 (VICTORY_PORT_DESCRIPTORS=1): the title's stores of
     // descriptor records tell the layer their slots.
