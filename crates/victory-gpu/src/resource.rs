@@ -2242,6 +2242,38 @@ pub(crate) fn unmap_exact() -> bool {
     })
 }
 
+/// Diagnostics: with `VICTORY_AB=<s>,VICTORY_UNMAP_EXACT`, whether the phase
+/// under way has it on. Unmappings are noted all along; copies go only in
+/// the phases that have it on, so that one run compares the card's memory,
+/// what is made again and the frames of both sides (a phase with it off
+/// keeps what it notes, and the next phase with it on lets that go too).
+#[cfg(all(windows, feature = "diagnostics"))]
+fn unmap_exact_ab() -> Option<bool> {
+    static BIT: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    let bit = *BIT.get_or_init(|| crate::ab::bit("VICTORY_UNMAP_EXACT"));
+    bit.map(crate::ab::on)
+}
+
+/// Whether unmappings are noted for [`let_go_unmapped`].
+#[cfg(windows)]
+fn unmap_noted() -> bool {
+    #[cfg(feature = "diagnostics")]
+    if unmap_exact_ab().is_some() {
+        return true;
+    }
+    unmap_exact()
+}
+
+/// Whether copies under memory really unmapped go now.
+#[cfg(windows)]
+fn unmap_exact_now() -> bool {
+    #[cfg(feature = "diagnostics")]
+    if let Some(on) = unmap_exact_ab() {
+        return on;
+    }
+    unmap_exact()
+}
+
 /// Whether title memory `[at, at + len)` shows anything now: a page of a
 /// view of physical pages (the runtime's record, `crate::inplace`), or
 /// memory that is not such a view and is committed (its first or last
@@ -2337,7 +2369,7 @@ fn under_ranges(ranges: &[(u64, u64)], start: u64, len: u64) -> bool {
 #[cfg(windows)]
 pub(crate) fn note_unmapped_exact(base: u64, len: u64) {
     use std::sync::atomic::Ordering::Relaxed;
-    if len == 0 || !unmap_exact() {
+    if len == 0 || !unmap_noted() {
         return;
     }
     EXACT[4].fetch_add(1, Relaxed);
@@ -2359,7 +2391,7 @@ pub(crate) static EXACT: [std::sync::atomic::AtomicU64; 6] = [const { std::sync:
 #[cfg(windows)]
 fn let_go_unmapped() {
     use std::sync::atomic::Ordering::Relaxed;
-    if !unmap_exact() {
+    if !unmap_exact_now() {
         return;
     }
     let really = std::mem::take(&mut *UNMAPPED_EXACT.lock().unwrap_or_else(|e| e.into_inner()));
@@ -2536,7 +2568,7 @@ pub(crate) fn housekeeping() {
         mb(exact[1]),
         exact[2],
         exact[3],
-        u8::from(unmap_exact()),
+        u8::from(unmap_exact_now()),
         mb(exact[5]),
         exact[4],
         if crate::residency::pressured() { "on" } else { "off" },
