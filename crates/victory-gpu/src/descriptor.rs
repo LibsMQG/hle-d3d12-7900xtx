@@ -445,7 +445,7 @@ pub(crate) fn sync_heaps() {
         // Ranges of the heap to look at, and whether a range is one the
         // fallback of renderer port #2 looks at whole.
         let mut parts: Vec<(usize, usize, bool)> = Vec::new();
-        let port = crate::port_descriptors::adopted(start);
+        let port = crate::port_descriptors::adopted(start) && crate::port_descriptors::now();
         if port {
             // Renderer port #2: the slots the title's patched stores and our
             // calls marked, in place of the changed pages; and a few of the

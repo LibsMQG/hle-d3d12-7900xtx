@@ -41,7 +41,27 @@ use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering::{
 pub fn on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     // Read once, here: the switch of renderer port #2.
-    *ON.get_or_init(|| std::env::var("VICTORY_PORT_DESCRIPTORS").is_ok_and(|v| v.trim() == "1"))
+    *ON.get_or_init(|| {
+        // A switch that changes in the run (`VICTORY_AB`) has its stores patched
+        // from the start; [`now`] says in which phases the marks are used.
+        #[cfg(feature = "diagnostics")]
+        if crate::ab::bit("VICTORY_PORT_DESCRIPTORS").is_some() {
+            return true;
+        }
+        std::env::var("VICTORY_PORT_DESCRIPTORS").is_ok_and(|v| v.trim() == "1")
+    })
+}
+
+/// Whether the marks stand for the heap's changed pages now: always when the
+/// switch is on, only in its phases when it changes in the run (`VICTORY_AB`,
+/// diagnostics). The stores keep marking in the other phases; the slots they
+/// marked are looked at once more when the marks are used again.
+pub(crate) fn now() -> bool {
+    #[cfg(feature = "diagnostics")]
+    if let Some(bit) = crate::ab::bit("VICTORY_PORT_DESCRIPTORS") {
+        return crate::ab::on(bit);
+    }
+    true
 }
 
 /// What the patched stores read (`victory_loader::descriptor_sites`,
