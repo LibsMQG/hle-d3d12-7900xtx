@@ -3363,7 +3363,7 @@ mod tests {
         soft::test_mode(soft::COPIES);
         let mut pages = [0usize; 2];
         let mut n = 2;
-        assert_eq!(XMemAllocatePhysicalPages(0, &mut n, pages.as_ptr().cast_mut()), 1);
+        assert_eq!(XMemAllocatePhysicalPages(0, &mut n, pages.as_mut_ptr()), 1);
         let reserve = |pages: usize| XMemVirtualAlloc(std::ptr::null_mut(), pages * PAGE, MEM_RESERVE | PAGES_64K, 0, PAGE_READWRITE);
         let (pool, gpu) = (reserve(2), reserve(3));
         assert!(!pool.is_null() && !gpu.is_null());
@@ -3441,7 +3441,7 @@ mod tests {
         soft::test_mode(soft::VERIFY);
         let mut pages = [0usize; 1];
         let mut n = 1;
-        assert_eq!(XMemAllocatePhysicalPages(0, &mut n, pages.as_ptr().cast_mut()), 1);
+        assert_eq!(XMemAllocatePhysicalPages(0, &mut n, pages.as_mut_ptr()), 1);
         let reserve = || XMemVirtualAlloc(std::ptr::null_mut(), PAGE, MEM_RESERVE | PAGES_64K, 0, PAGE_READWRITE);
         let (pool, gpu) = (reserve(), reserve());
         assert_eq!(XMemMapPhysicalPages(pool, 1, pages.as_ptr()), pool);
