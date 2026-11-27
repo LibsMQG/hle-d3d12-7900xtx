@@ -2941,7 +2941,8 @@ fn protect_alias(g: &Guards, block: usize, claims: Option<&mut Claims>) -> bool 
         soft_count(SN_GUARD_ALIAS, 1);
         return true;
     }
-    if g.rests(block, rest()) {
+    if g.rests(block, rest()) || alike(block, block + 1) == 0 {
+        // (`alike`: a page the title guards itself in the block would lose its guard.)
         return false;
     }
     // Ahead of the protection.
@@ -2972,6 +2973,10 @@ fn protect_alias(g: &Guards, block: usize, claims: Option<&mut Claims>) -> bool 
 }
 
 /// [`protect`] for one range, without the other views of its pages.
+/// Only blocks [`alike`] are changed: a range is asked for whole if it is alike throughout,
+/// else block by block, and a block that is not alike gets no call and is left as it is
+/// (one change sets the protection of every page it covers, and `old` tells only the first
+/// page's: a page the title guards further in would lose its guard unseen).
 fn protect_here(g: &Guards, from: usize, to: usize) {
     use windows_sys::Win32::System::Memory::{PAGE_READONLY, PAGE_READWRITE, VirtualProtect};
     let set = |from: usize, to: usize| {
@@ -3039,14 +3044,14 @@ fn protect_plain(
     set: &dyn Fn(usize, usize) -> bool,
     note: &dyn Fn(&Guards, usize, usize),
 ) {
-    if set(from, to) {
+    if plain_throughout(from, to) && set(from, to) {
         note(g, from, to);
         return;
     }
     let mut uncommitted_until = from;
     for block in from..to {
         // (Not one question a block of a region that is not there.)
-        if block >= uncommitted_until && set(block, block + 1) {
+        if block >= uncommitted_until && alike(block, block + 1) != 0 && set(block, block + 1) {
             note(g, block, block + 1);
             continue;
         }
@@ -3063,6 +3068,42 @@ fn protect_plain(
             }
         }
     }
+}
+
+/// How many of the blocks `[first, last)`, from the first on, one change of protection may
+/// cover: committed memory of one region, read-only or read-write throughout; 0 for anything
+/// else. A change sets the protection of every page it covers, so one over a page the title
+/// guards (`PAGE_GUARD`) would take the guard away. (After PastiiJay/klbf-lab 409d69c; the
+/// check is avatarmanz/VIctory-7900XTX PR #68's.)
+fn alike(first: usize, last: usize) -> usize {
+    use windows_sys::Win32::System::Memory::{
+        MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_READONLY, PAGE_READWRITE, VirtualQuery,
+    };
+    // SAFETY: plain data filled in by the query.
+    let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: a valid out pointer of the right size.
+    let n = unsafe { VirtualQuery((first * BLOCK) as *const _, &mut info, size_of_val(&info)) };
+    let plain = matches!(info.Protect, PAGE_READONLY | PAGE_READWRITE);
+    if n == 0 || info.State != MEM_COMMIT || !plain {
+        return 0;
+    }
+    let end = (info.BaseAddress as usize).saturating_add(info.RegionSize) / BLOCK;
+    end.min(last).saturating_sub(first)
+}
+
+/// Whether every block of `[from, to)` is [`alike`], region after region: committed,
+/// read-only or read-write throughout (pages of ours already read-only next to read-write
+/// ones split the regions without making the range unfit for one change).
+fn plain_throughout(from: usize, to: usize) -> bool {
+    let mut at = from;
+    while at < to {
+        let n = alike(at, to);
+        if n == 0 {
+            return false;
+        }
+        at += n;
+    }
+    true
 }
 
 /// The end (exclusive) of the whole uncommitted blocks starting at `block`.
@@ -5047,6 +5088,59 @@ mod tests {
         }
         // SAFETY: the section's last reference.
         unsafe { CloseHandle(section as *mut std::ffi::c_void) };
+    }
+
+    /// Sets `PAGE_GUARD` on the page at `at`, as the title does.
+    fn title_sets_guard(at: usize) {
+        use windows_sys::Win32::System::Memory::{PAGE_GUARD, VirtualProtect};
+        let mut old = 0;
+        // SAFETY: a page of one of our views.
+        let set = unsafe { VirtualProtect(at as *const _, KERNEL_PAGE, PAGE_READWRITE | PAGE_GUARD, &mut old) };
+        assert_ne!(set, 0);
+    }
+
+    /// A page the title guards itself (`PAGE_GUARD`) inside a range that is
+    /// taken keeps its guard: its block is left as it is, the blocks around
+    /// it are made read-only, and it is told as written at every asking.
+    /// (After PastiiJay/klbf-lab 409d69c.)
+    #[test]
+    fn a_page_the_title_guards_inside_a_range_keeps_its_guard() {
+        use windows_sys::Win32::System::Memory::{PAGE_GUARD, PAGE_READONLY};
+        let _serial = crate::watch::serial_test();
+        const SIZE: usize = 4 * BLOCK;
+        let (section, one, two) = two_views(SIZE);
+        let guarded = one + BLOCK + KERNEL_PAGE;
+        title_sets_guard(guarded);
+        assert!(guard(one, one + SIZE).is_some());
+        assert_eq!(protection(guarded), PAGE_READWRITE | PAGE_GUARD, "the title's guard is gone");
+        assert_eq!(protection(one + BLOCK), PAGE_READWRITE, "its block is left as it was");
+        for block in [0, 2, 3] {
+            assert_eq!(protection(one + block * BLOCK), PAGE_READONLY, "block {block}");
+        }
+        assert!(guard(one, one + SIZE).is_some_and(|written| written.contains(&((one + BLOCK) / PAGE))));
+        drop_views(section, &[one, two], SIZE);
+    }
+
+    /// A page the title guards itself in another view of guarded pages keeps
+    /// its guard: that view's block is left as it is, and the guarded block
+    /// is told as written at every asking (a write there would not fault).
+    #[test]
+    fn a_page_the_title_guards_in_another_view_keeps_its_guard() {
+        use windows_sys::Win32::System::Memory::{PAGE_GUARD, PAGE_READONLY};
+        let _serial = crate::watch::serial_test();
+        const SIZE: usize = 4 * BLOCK;
+        let (section, guarded, other) = two_views(SIZE);
+        let page = other + BLOCK + KERNEL_PAGE;
+        title_sets_guard(page);
+        assert!(guard(guarded, guarded + SIZE).is_some());
+        assert_eq!(protection(page), PAGE_READWRITE | PAGE_GUARD, "the title's guard is gone");
+        assert_eq!(protection(other + BLOCK), PAGE_READWRITE, "its block is left as it was");
+        for block in [0, 2, 3] {
+            assert_eq!(protection(other + block * BLOCK), PAGE_READONLY, "block {block}");
+        }
+        let again = guard(guarded, guarded + SIZE).unwrap();
+        assert!(again.contains(&((guarded + BLOCK) / PAGE)), "told as written at every asking");
+        drop_views(section, &[guarded, other], SIZE);
     }
 
     /// The title wrote the pages of a guarded texture through another view
