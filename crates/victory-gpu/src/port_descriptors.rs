@@ -266,9 +266,16 @@ struct Fallback {
     looked: u64,
     /// The page it goes on from (round the heap).
     next: usize,
+    /// With [`sort_on`]: of each of those pages, the 4 KiB parts the watch
+    /// said were written (a bit each) since the page was last looked at.
+    parts: std::collections::BTreeMap<usize, u16>,
 }
 
-static FALLBACK: std::sync::Mutex<Fallback> = std::sync::Mutex::new(Fallback { pages: std::collections::BTreeSet::new(), asked: 0, looked: 0, next: 0 });
+static FALLBACK: std::sync::Mutex<Fallback> =
+    std::sync::Mutex::new(Fallback { pages: std::collections::BTreeSet::new(), asked: 0, looked: 0, next: 0, parts: std::collections::BTreeMap::new() });
+
+/// The kernel's page, the write watch's finest part of a [`crate::watch::PAGE`].
+const KERNEL_PAGE: usize = 4096;
 
 /// Whether to ask the write watch of the marked heap this frame.
 pub(crate) fn ask_due(frame: u64) -> bool {
@@ -283,13 +290,25 @@ pub(crate) fn ask_due(frame: u64) -> bool {
 /// What the watch said was written (byte ranges), for later.
 pub(crate) fn asked(ranges: &[(usize, usize)]) {
     let mut f = FALLBACK.lock().unwrap_or_else(|e| e.into_inner());
+    let sort = sort_on();
     for &(from, to) in ranges {
         let mut page = from & !(crate::watch::PAGE - 1);
         while page < to {
             f.pages.insert(page);
+            if sort {
+                *f.parts.entry(page).or_default() |= parts_of(page, from, to);
+            }
             page += crate::watch::PAGE;
         }
     }
+}
+
+/// The 4 KiB parts (a bit each) of the page at `page` that `[from, to)` lies
+/// on; the range meets the page.
+fn parts_of(page: usize, from: usize, to: usize) -> u16 {
+    let first = (from.max(page) - page) / KERNEL_PAGE;
+    let past = (to.min(page + crate::watch::PAGE) - page).div_ceil(KERNEL_PAGE);
+    ((1u32 << past) - (1u32 << first)) as u16
 }
 
 /// The pages to look at whole this frame (once a frame; none after).
@@ -300,6 +319,8 @@ pub(crate) fn to_check(frame: u64) -> Vec<usize> {
     }
     f.looked = frame;
     let mut out = Vec::new();
+    let sort = sort_on();
+    let mut parts = std::collections::BTreeMap::new();
     while out.len() < check_budget() {
         let from = f.next;
         let Some(&page) = f.pages.range(from..).next().or_else(|| f.pages.iter().next()) else {
@@ -308,8 +329,14 @@ pub(crate) fn to_check(frame: u64) -> Vec<usize> {
         f.pages.remove(&page);
         f.next = page + crate::watch::PAGE;
         out.push(page);
+        if sort {
+            parts.insert(page, f.parts.remove(&page).unwrap_or(0));
+        }
     }
     CHECKED[0].fetch_add(out.len() as u64, Relaxed);
+    if sort && !out.is_empty() {
+        with_sort(|s| s.parts = parts);
+    }
     out
 }
 
@@ -425,9 +452,9 @@ fn should_warn_missed(n: u64) -> bool {
     n < 20 || n.is_power_of_two()
 }
 
-/// The fallback found slot `index` (at `handle`) with a new record: a view
-/// record that no mark told of is counted and said.
-pub(crate) fn missed(index: u32, handle: u64, view: bool, tabled: bool) {
+/// The fallback found slot `index` (at `handle`) with a new record (`record`,
+/// its bytes as read): a view record that no mark told of is counted and said.
+pub(crate) fn missed(index: u32, handle: u64, view: bool, tabled: bool, record: &[u8]) {
     if !view {
         CHECKED[2].fetch_add(1, Relaxed);
         return;
@@ -444,6 +471,11 @@ pub(crate) fn missed(index: u32, handle: u64, view: bool, tabled: bool) {
         // A draw read it through a table lately: the draw makes it anyway.
         CHECKED[5].fetch_add(1, Relaxed);
     }
+    if sort_on() {
+        let kind = record.get(8..12).and_then(|b| b.try_into().ok()).map_or(0, u32::from_le_bytes) >> 30;
+        let hash = record_hash(record);
+        with_sort(|s| s.missed.push((index, handle, hash, kind)));
+    }
     let n = MISSED_ALL.fetch_add(1, Relaxed);
     let rip = a.writers.get(((handle - a.start) >> 16) as usize).map_or(0, |w| w.load(Relaxed));
     let (base, size) = (IMAGE[0].load(Relaxed), IMAGE[1].load(Relaxed));
@@ -459,6 +491,127 @@ pub(crate) fn missed(index: u32, handle: u64, view: bool, tabled: bool) {
             %writer,
             "renderer port 2: a view record in the title's heap that no store told of (found by the fallback; made now)"
         );
+    }
+}
+
+/// Diagnostics: whether the view records the fallback finds that no mark
+/// told of are sorted by what may have written them
+/// (`VICTORY_PORT_DESCRIPTORS_SORT=1`; a line of its own says how).
+#[cfg(feature = "diagnostics")]
+pub(crate) fn sort_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_PORT_DESCRIPTORS_SORT").is_some_and(|v| v == "1"))
+}
+
+/// Without diagnostics the missed records are only counted.
+#[cfg(not(feature = "diagnostics"))]
+pub(crate) const fn sort_on() -> bool {
+    false
+}
+
+/// A hash of a record's bytes, to know a copy of another by.
+pub(crate) fn record_hash(record: &[u8]) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for word in record.chunks(8) {
+        let mut w = [0u8; 8];
+        w[..word.len()].copy_from_slice(word);
+        h = (h ^ u64::from_le_bytes(w)).wrapping_mul(0x0000_0100_0000_01b3).rotate_left(29);
+    }
+    h
+}
+
+/// What [`sort_round`] knows ([`sort_on`]).
+#[derive(Default)]
+struct Sort {
+    /// Missed since the last round: slot, handle, hash of the record, its kind
+    /// (the top two bits of its third word: 0 an entry of the views' table,
+    /// 1 a constant buffer view, 2 a view of placed memory).
+    missed: Vec<(u32, u64, u64, u32)>,
+    /// Of the pages looked at whole this frame, the 4 KiB parts the watch said
+    /// were written since they were last looked at.
+    parts: std::collections::BTreeMap<usize, u16>,
+    /// The frame `told` is of, the hashes of the records in slots told in it,
+    /// and those of the frame before.
+    frame: u64,
+    told: std::collections::HashSet<u64>,
+    told_before: std::collections::HashSet<u64>,
+    /// Per 32 slots (1 KiB) and per 1024 slots (32 KiB, the reach of the
+    /// stores' `and 7FE0h`): the last frame a slot of them was told in, plus one.
+    groups: Vec<u64>,
+    windows: Vec<u64>,
+}
+
+static SORT: std::sync::Mutex<Option<Sort>> = std::sync::Mutex::new(None);
+
+/// `f` with [`SORT`], made on first use.
+fn with_sort<R>(f: impl FnOnce(&mut Sort) -> R) -> R {
+    let mut sort = SORT.lock().unwrap_or_else(|e| e.into_inner());
+    f(sort.get_or_insert_with(Sort::default))
+}
+
+/// Since the last line, the missed view records sorted: all; by kind (table
+/// entry, constant, placed, other); a slot told this frame or the one before
+/// in their 32 slots, else in their 1024, else neither; the same bytes as a
+/// record told this frame, the frame before, neither; on a 4 KiB part the
+/// watch said was written, on one it did not, not known (the watch said the
+/// whole page).
+static SORTED: [AtomicU64; 14] = [const { AtomicU64::new(0) }; 14];
+
+/// The end of a round of the marked heap at frame `frame` ([`sort_on`]): its
+/// told runs and the hashes of their records; the records missed in it sorted.
+pub(crate) fn sort_round(frame: u64, runs: &[(u32, u32)], told: Vec<u64>) {
+    with_sort(|s| sort_round_in(s, frame, runs, told));
+}
+
+fn sort_round_in(s: &mut Sort, frame: u64, runs: &[(u32, u32)], told: Vec<u64>) {
+    if s.frame != frame {
+        s.told_before = std::mem::take(&mut s.told);
+        s.frame = frame;
+    }
+    s.told.extend(told);
+    for &(first, n) in runs {
+        if n == 0 {
+            continue;
+        }
+        let (first, last) = (first as usize, (first + n - 1) as usize);
+        for (map, shift) in [(&mut s.groups, 5), (&mut s.windows, 10)] {
+            if map.len() <= last >> shift {
+                map.resize((last >> shift) + 1, 0);
+            }
+            for stamp in &mut map[first >> shift..=last >> shift] {
+                *stamp = frame + 1;
+            }
+        }
+    }
+    let missed = std::mem::take(&mut s.missed);
+    // Told in this frame or the one before.
+    let recent = |map: &[u64], at: usize| map.get(at).is_some_and(|&stamp| stamp != 0 && stamp >= frame);
+    for (index, handle, hash, kind) in missed {
+        let slot = index as usize;
+        let page = handle as usize & !(crate::watch::PAGE - 1);
+        let part = (handle as usize - page) / KERNEL_PAGE;
+        let near = if recent(&s.groups, slot >> 5) {
+            5
+        } else if recent(&s.windows, slot >> 10) {
+            6
+        } else {
+            7
+        };
+        let copy = if s.told.contains(&hash) {
+            8
+        } else if s.told_before.contains(&hash) {
+            9
+        } else {
+            10
+        };
+        let written = match s.parts.get(&page) {
+            Some(&mask) if mask != u16::MAX && mask >> part & 1 != 0 => 11,
+            Some(&mask) if mask != u16::MAX => 12,
+            _ => 13,
+        };
+        for n in [0, 1 + kind.min(3) as usize, near, copy, written] {
+            SORTED[n].fetch_add(1, Relaxed);
+        }
     }
 }
 
@@ -601,6 +754,29 @@ pub(crate) fn line(frames: f64) {
         MISSED_ALL.load(Relaxed),
         if writers.is_empty() { "none".into() } else { writers }
     );
+    if sort_on() {
+        let s = SORTED.each_ref().map(|c| c.swap(0, Relaxed) as f64 / frames);
+        tracing::info!(
+            "renderer port 2's missed view records sorted (VICTORY_PORT_DESCRIPTORS_SORT=1) per frame: {:.1}; by kind: {:.1} entries of the views' table, \
+             {:.1} constant buffer views, {:.1} views of placed memory, {:.1} other; a slot told this frame or the one before in their 32 slots {:.1}, \
+             only in their 1024 slots {:.1}, in neither {:.1}; the same bytes as a record told this frame {:.1}, the frame before {:.1}, neither {:.1}; \
+             on a 4 KiB part the write watch said was written {:.1}, on one it did not {:.1}, not known (the watch said the whole page) {:.1}",
+            s[0],
+            s[1],
+            s[2],
+            s[3],
+            s[4],
+            s[5],
+            s[6],
+            s[7],
+            s[8],
+            s[9],
+            s[10],
+            s[11],
+            s[12],
+            s[13]
+        );
+    }
 }
 
 #[cfg(test)]
@@ -723,27 +899,27 @@ mod tests {
 
         // Slot 5 is marked: pending (CHECKED[3]) increments, tabled (CHECKED[5]) and missed (CHECKED[1], MISSED_ALL) do not.
         mark(start + 5 * 32);
-        missed(5, start + 5 * 32, true, true);
+        missed(5, start + 5 * 32, true, true, &[0; 32]);
         assert_eq!(CHECKED[3].load(Relaxed), 1);
         assert_eq!(CHECKED[1].load(Relaxed), 0);
         assert_eq!(CHECKED[5].load(Relaxed), 0);
         assert_eq!(MISSED_ALL.load(Relaxed), 0);
 
         // Unmarked tabled view record increments both missed and tabled, plus MISSED_ALL.
-        missed(6, start + 6 * 32, true, true);
+        missed(6, start + 6 * 32, true, true, &[0; 32]);
         assert_eq!(CHECKED[1].load(Relaxed), 1);
         assert_eq!(CHECKED[5].load(Relaxed), 1);
         assert_eq!(MISSED_ALL.load(Relaxed), 1);
 
         // Even after line() resets CHECKED[1], the global warn sequence continues past 20 without resetting.
         for i in 7..28 {
-            missed(i, start + u64::from(i) * 32, true, false);
+            missed(i, start + u64::from(i) * 32, true, false, &[0; 32]);
         }
         CHECKED[1].store(0, Relaxed);
         let n_before = MISSED_ALL.load(Relaxed);
         assert_eq!(n_before, 22);
         assert!(!should_warn_missed(n_before));
-        missed(28, start + 28 * 32, true, false);
+        missed(28, start + 28 * 32, true, false, &[0; 32]);
         assert_eq!(CHECKED[1].load(Relaxed), 1);
         assert_eq!(MISSED_ALL.load(Relaxed), 23);
         assert!(should_warn_missed(32));
@@ -751,5 +927,48 @@ mod tests {
 
         let_go(start);
         WRITERS.lock().unwrap().clear();
+    }
+
+    /// Missed records are sorted by a told slot near them, a told record with
+    /// their bytes, and the 4 KiB part the watch said was written.
+    #[test]
+    fn missed_records_are_sorted_by_what_may_have_written_them() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let start = 0x2000_0000u64;
+        let page = |n: u64| (start + n * crate::watch::PAGE as u64) as usize;
+        let (told_now, told_before) = (record_hash(&[1; 32]), record_hash(&[2; 32]));
+        let mut s = Sort { frame: 9, ..Sort::default() };
+        s.told.insert(told_before);
+        // Of page 0 the watch said parts 1 and 3 were written; page 2 it did not say.
+        s.parts.insert(page(0), 0b1010);
+        // Slot 70 next to told 64..68, the bytes of a record told now, on part 0.
+        s.missed.push((70, start + 70 * 32, told_now, 0));
+        // Slot 500 in the same 1024 slots only, other bytes, on part 3.
+        s.missed.push((500, start + 500 * 32, record_hash(&[3; 32]), 2));
+        // Slot 5000 far, the bytes of a record told the frame before, on page 2.
+        s.missed.push((5000, start + 5000 * 32, told_before, 1));
+        let before = SORTED.each_ref().map(|c| c.load(Relaxed));
+        sort_round_in(&mut s, 10, &[(64, 4)], vec![told_now]);
+        let after = SORTED.each_ref().map(|c| c.load(Relaxed));
+        let delta: Vec<u64> = after.iter().zip(before).map(|(a, b)| a - b).collect();
+        assert_eq!(delta, [3, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
+        assert!(s.missed.is_empty());
+        assert_eq!(s.frame, 10);
+        assert!(s.told.contains(&told_now) && s.told_before.contains(&told_before));
+        assert_eq!(page(2), (start + 5000 * 32) as usize & !(crate::watch::PAGE - 1));
+    }
+
+    /// The watch's ranges set the bits of the 4 KiB parts they lie on.
+    #[test]
+    fn asked_ranges_mark_their_4k_parts() {
+        let base = 0x4000_0000usize;
+        let next = base + crate::watch::PAGE;
+        assert_eq!(parts_of(base, base, next), u16::MAX);
+        assert_eq!(parts_of(base, base + 4096, base + 8192), 0b10);
+        assert_eq!(parts_of(base, base + 4000, base + 4200), 0b11);
+        assert_eq!(parts_of(base, base + 15 * 4096, next), 0x8000);
+        // A range over two pages: each gets its own parts.
+        assert_eq!(parts_of(base, next - 4096, next + 4096), 0x8000);
+        assert_eq!(parts_of(next, next - 4096, next + 4096), 0b1);
     }
 }

@@ -446,12 +446,16 @@ pub(crate) fn sync_heaps() {
         // fallback of renderer port #2 looks at whole.
         let mut parts: Vec<(usize, usize, bool)> = Vec::new();
         let port = crate::port_descriptors::adopted(start) && crate::port_descriptors::now();
+        // Renderer port #2's told runs of this round, and (diagnostics,
+        // `VICTORY_PORT_DESCRIPTORS_SORT=1`) whether its missed records are sorted.
+        let mut runs: Vec<(u32, u32)> = Vec::new();
+        let sort = port && crate::port_descriptors::sort_on();
         if port {
             // Renderer port #2: the slots the title's patched stores and our
             // calls marked, in place of the changed pages; and a few of the
             // pages the watch says were written, looked at whole.
             let phase = crate::timeline::span("the heaps' records: the marks taken (renderer port 2)");
-            let runs = crate::port_descriptors::take(start).unwrap_or_default();
+            runs = crate::port_descriptors::take(start).unwrap_or_default();
             phase.end();
             if crate::port_descriptors::ask_due(frame) {
                 let began = std::time::Instant::now();
@@ -516,6 +520,10 @@ pub(crate) fn sync_heaps() {
                 };
                 let count = (records.len() as u64 / step).min(slots.end.saturating_sub(first));
                 out.looked += count;
+                if sort && !check {
+                    // The records of told slots, to know copies of them by.
+                    out.told.extend(records[..(count * step) as usize].chunks_exact(step as usize).map(crate::port_descriptors::record_hash));
+                }
                 // Only the records that are not the ones last seen
                 // there (`host::Copied::changes`).
                 changed.clear();
@@ -532,7 +540,8 @@ pub(crate) fn sync_heaps() {
                     };
                     if check && !crate::port_descriptors::was_taken_in_check(&taken_in_check, index) {
                         // Renderer port #2's fallback: what no mark told of.
-                        crate::port_descriptors::missed(index, start + u64::from(index) * step, !samplers && word(0) == VIEW_TAG, host.copied_tabled(index, frame));
+                        let record = records.get(at..at + step as usize).unwrap_or_default();
+                        crate::port_descriptors::missed(index, start + u64::from(index) * step, !samplers && word(0) == VIEW_TAG, host.copied_tabled(index, frame), record);
                     }
                     if !samplers && word(0) == VIEW_TAG {
                         // A draw's own table: the draw makes what it
@@ -575,8 +584,10 @@ pub(crate) fn sync_heaps() {
             *found[n].lock().unwrap_or_else(|e| e.into_inner()) = out;
         });
         drop(copied);
+        let mut told: Vec<u64> = Vec::new();
         for part in found {
             let mut part = part.into_inner().unwrap_or_else(|e| e.into_inner());
+            told.append(&mut part.told);
             pages += part.pages;
             views += part.views;
             bytes += part.bytes;
@@ -592,6 +603,9 @@ pub(crate) fn sync_heaps() {
             }
         }
         spent[1] += since(began);
+        if sort {
+            crate::port_descriptors::sort_round(frame, &runs, told);
+        }
         let began = std::time::Instant::now();
         crate::land::each_view(true, make.len().div_ceil(SYNC_AT_A_TIME), &|n| {
             for &index in make.chunks(SYNC_AT_A_TIME).nth(n).unwrap_or_default() {
@@ -635,6 +649,9 @@ struct SyncPart {
     make: Vec<u32>,
     wait: Vec<u32>,
     kinds: [u64; 5],
+    /// Hashes of the records of told slots (renderer port #2's sorting of
+    /// missed records, diagnostics).
+    told: Vec<u64>,
 }
 
 /// Pages [`sync_heaps`] gives a thread at a time.
