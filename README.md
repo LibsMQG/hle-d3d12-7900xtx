@@ -3,7 +3,7 @@
 A compatibility runtime that runs x64 PE executables built for another platform natively on
 Windows: high-level emulation of their system services, a Direct3D 12 GPU back end and an
 RDNA-to-DXIL shader recompiler. A fork of
-[YukiRyuu/RYUKI-7900XT](https://github.com/YukiRyuu/RYUKI-7900XT), which is built on
+[YukiRyuu/RYUKI-7900XT](https://github.com/YukiRyuu/RYUKI-7900XT), itself built on
 [avatarmanz/VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX) and
 [VIctory](https://github.com/Marvisak/VIctory). Developed and measured on an
 **RX 7900 XTX with 32 GB of RAM**.
@@ -11,6 +11,14 @@ RDNA-to-DXIL shader recompiler. A fork of
 **This repository contains no game files, code or assets.** You need your own copy of the
 software you run with it. The asset policy ([docs/asset-policy.md](docs/asset-policy.md)) is
 checked by `cargo xtask policy` and by the pre-commit hook (`cargo xtask install-hooks`).
+
+Contents: [PC](#the-pc-it-is-measured-on) ·
+[Milestones](#milestones) ·
+[Where the code comes from](#where-the-code-comes-from) ·
+[Our own work](#our-own-work) ·
+[Known limits](#known-limits) ·
+[How to run it](#how-to-run-it) ·
+[Credits](#credits)
 
 ## The PC it is measured on
 
@@ -23,32 +31,39 @@ checked by `cargo xtask policy` and by the pre-commit hook (`cargo xtask install
 
 ## Milestones
 
+Standing still in one fixed test spot, release or diagnostics build, median frame time.
+
 | Date | Where it stood |
 |---|---|
-| 2026-11-25 | First run on this PC: menus at 30 fps; entering the world took about two minutes of pipeline compilation (some 600 a minute); in the world 0.1-1.8 fps, with about 16% of the draws dropped for lack of a pipeline. |
-| 2026-11-26 | The project's own line, with its speed switches: 143 ms a frame (7 fps) standing in a fixed test spot. |
-| 2026-11-26 | Rebased on the RYUKI tree, with this fork's fixes and diagnostics on top: **73 ms a frame (13.6 fps)** in the same spot, picture complete once the pipeline cache is built, no errors in the log. |
+| 2026-11-25 | First run on this PC: menus at 30 fps; entering the world took about two minutes of pipeline compilation; in the world 0.1-1.8 fps, with about 16% of the draws dropped for lack of a pipeline. |
+| 2026-11-26 | The project's own first line, with its speed switches: 143 ms a frame (7 fps). |
+| 2026-11-26 | Rebased on the RYUKI tree, with this fork's fixes and diagnostics on top: 73 ms (13.6 fps), picture complete once the pipeline cache is built, no errors in the log. |
+| 2026-11-27 | Renderer ports 1 and 5, then the RDNA3 fork's submit-thread changes and buffers in place: about 70 ms; the submitting thread's work went from ~77 to ~57 ms a frame. |
+| 2026-11-27 | Renderer port 2 (descriptor stores tell their slots): **about 68 ms (14.7 fps)**, submitting thread ~51 ms; no picture defects standing, walking or moving fast. |
 
-Measured in a release build, standing still, median of the last 16 five-second blocks.
+Moving fast through the world is still far slower (about 6-12 fps): pipelines met for the first time
+and memory pressure, see [Known limits](#known-limits).
 
-## What this fork adds
+## Where the code comes from
 
-### Diagnostics
+Every commit taken from elsewhere keeps its author and, where it was a cherry-pick, a
+`cherry picked from` line. Each fork was read and checked before anything was taken.
 
-All off by default and counting only; release builds have them too.
+| Source | What it is | What we took, and why |
+|---|---|---|
+| [YukiRyuu/RYUKI-7900XT](https://github.com/YukiRyuu/RYUKI-7900XT) | 7900 XT/XTX fork with 32 GB work and many community forks merged | **The base tree** (the root commit). Chosen because it was already faster than our first line, so our work was ported onto it piece by piece. |
+| [avatarmanz/VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX) | 7900 XTX fork that carries the upstream renderer patches | **Renderer ports 1, 5, 6, 7** and the halving search for ranges asked ahead. Aim: the submitting thread, which is what limits the frame. Ports 1 and 5 are on in `play.ps1 -RX7900XT`; 6 and 7 stay off (measured: no gain or worse). |
+| [polackangry/POLSKAGUROM](https://github.com/polackangry/POLSKAGUROM) | NVIDIA-oriented fork on the upstream line | **Renderer port 2** (`VICTORY_PORT_DESCRIPTORS`): the title's descriptor-record stores report their slots instead of the whole view heap being scanned. Submitting thread -4 ms, heap rounds 28 -> 19 ms. On in `-RX7900XT`. |
+| [XaviFortes/VIctory-RDNA](https://github.com/XaviFortes/VIctory-RDNA) | RX 7900 XT fork focused on the submitting thread | AVX2 compare in `Shadow::take`, a lock-free "anything pending?" flag with a `RwLock`, 4 MiB journal pieces, `VICTORY_PORT_BUFFERS` (title buffers above 4 GiB in place, big ones kept in VRAM). Together about -5 ms a frame. Its unconditional in-place card-step changes were left out (no effect here, correctness risk). |
+| [WillyboPeep/victory-all-forks](https://github.com/WillyboPeep/victory-all-forks) | A merge of many community forks | **Correctness fixes**, not speed: use-after-free in audio, queues and fences; save-data validation; loader, GPU, shader-recompiler and DirectStorage fixes; frame-wait ticks; Bink skip. Full list under [Fixes taken from others](#fixes-taken-from-others). |
+| [VIctory](https://github.com/Marvisak/VIctory) | The upstream project | Through all of the above. One idea re-written by us: a submission's one asking holds every range over both its parts (after upstream `e000e02`). |
 
-| Switch | Says |
-|---|---|
-| `VICTORY_CPU_STATS=1` | every 5 s, per frame: the submitting thread's waits for work in flight, by what it was about to read and why the steps done on the card did not take it; per wait, how many of the bytes read the work in flight really changed meanwhile; fills of upload memory by who made them; the write watch's `VirtualQuery` calls |
-| `VICTORY_DISK_STATS=1` | the DirectStorage read report (requests, MB/s, workers) at info level |
-| `VICTORY_MEM_OWNERS=<csv>` | upload and shared buffers with the code that asked for them; every 30 s the write-combined and private memory blocks by size and owner |
-| `VICTORY_CHANGED_BYTES=1` | (diagnostics build) how much of what is copied into host copies differs from what they held |
+Forks that were read and checked but gave **nothing** taken here (already present, no gain on
+this GPU, or a different architecture): Belobug/VIctory-Belobug-AMD, fxceless/victory-fork,
+JoshuuDev/victory-amd, DexNom, rorodev6's forks, Op-lite's fork,
+Paradoxo321/rodrion-vi, LooperSalty's fork and others.
 
-What they showed first: standing in the test spot, the submitting thread waits only about
-2.6 ms a frame for work in flight, and the bytes it waited for were not changed by it; the rest
-of its frame is preparation (buffer copies about 30 ms).
-
-### Important fixes
+### Fixes taken from others
 
 - **Use after free**: the audio heap freed under the audio decoder; command queues released while
   their held work was being run; fences released while queue waits, signals or late signals still
@@ -68,14 +83,56 @@ of its frame is preparation (buffer copies about 30 ms).
   always true or false; 16-bit gradients on gfx10; PSV0 semantic names repeated; first-lane and
   lane-read refusals retried wave-wide; export target 16 read as `pos4`.
 - **DirectStorage**: the factory's out pointer is cleared on failure.
+- `VICTORY_SKIP_BINK=1` skips Bink intro movies (`all` also the looping ones).
 
-`VICTORY_SKIP_BINK=1` skips Bink intro movies (`all` also the looping ones).
+## Our own work
+
+What this fork wrote itself, not taken from another tree.
+
+### Diagnostics
+
+All off by default and counting only; release builds have them too.
+
+| Switch | Says |
+|---|---|
+| `VICTORY_CPU_STATS=1` | every 5 s, per frame: the submitting thread's waits for work in flight, by what it was about to read and why the card's steps did not take it; how many of the bytes waited for really changed; fills of upload memory by who made them; the write watch's `VirtualQuery` calls |
+| `VICTORY_DISK_STATS=1` | the DirectStorage read report (requests, MB/s, workers) at info level |
+| `VICTORY_MEM_OWNERS=<csv>` | upload and shared buffers with the code that asked for them; every 30 s the write-combined and private memory blocks by size and owner |
+| `VICTORY_CHANGED_BYTES=1` | (diagnostics build) how much of what is copied into host copies differs from what they held |
+| `VICTORY_PORT_DESCRIPTORS_SORT=1` | sorts the view records renderer port 2's stores did not report: by kind, by whether a near slot was reported, by whether the bytes copy a reported record |
+| `VICTORY_PORT_DESCRIPTORS_TRACE=1` | a hardware write-breakpoint tracer (DR0-DR3 on every thread) that names the code writing records port 2 missed |
+
+`diagnostics/` holds the probes and scripts that read these counters and measure the host.
+
+What they showed: the frame is limited by the submitting thread (preparation plus waits for
+the card, one after the other), not by RAM or VRAM traffic; port 2's real misses are about
+6 records a frame out of 65,000 and none of them is a CPU write through the heap's address.
+
+### Speed and correctness changes
+
+- **Descriptor slot bits** (`4b77a27`): per-slot bits keep two hot locks out of writes that
+  change nothing there (-1.9% frame time, in-run A/B).
+- **Every port re-done for this tree**: the renderer ports and the RDNA3 changes were written for
+  other histories; each one was adapted here (in-place page budget, deferred unmappings, remap
+  marks, the absence of upstream modules), and each commit says what was changed.
+- **Switches for always-on changes** (`VICTORY_TAKE_AVX2`, `VICTORY_PENDING_FLAG`,
+  `VICTORY_WIDE_SMALL`) so each one could be measured: 256 KiB wide jobs turned out slower and
+  are now opt-in; port 2 can be flipped inside a run. Changes were measured with the base
+  tree's in-run A/B (`VICTORY_AB`), since the same build varies ~15 ms from run to run.
+- **Measured defaults in `play.ps1 -RX7900XT`**: card clocks no longer kept up
+  (`VICTORY_CARD_AWAKE` off); ports 1, 5, 2 and `VICTORY_PORT_BUFFERS` on; ports 6 and 7 off.
+- **One fix reverted**: the quad-read derivative change from the all-forks merge was taken out
+  again on this tree.
+- **CI**: clippy clean with `-D warnings` in both CI variants; tests that share global state
+  (watch, call hooks) run one at a time, so the suite no longer fails at random.
 
 ## Known limits
 
-- Two device methods that create pipelines are not implemented yet: the draws that need those
-  pipelines are dropped (about 350 a frame in the test spot), together with shaders the recompiler
-  refuses.
+- Two device methods that create pipelines are not implemented yet; their draws, together with
+  about 200 shaders the recompiler cannot translate yet, are dropped (about 340 draws a frame).
+- Moving fast through new areas: pipelines are compiled when first met (`victory warm --used`
+  builds them ahead), and with 32 GB of RAM free memory falls to 1-2 GB, so the title's memory
+  remapping costs 100-200 ms a second.
 - After any change to the shader recompiler the first start rebuilds the pipeline cache: several
   minutes with missing textures before the picture is complete.
 
@@ -102,6 +159,12 @@ authors.
   fork, its 32 GB work and the forks it carries (its full list is in
   [docs/README-ryuki.md](docs/README-ryuki.md): avatarmanz, fxceless, DexNom, Belobug, FQY55kai,
   myokex, codec_d's cool_fox, Op-lite and others).
+- **[avatarmanz/VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX)** by avatarmanz,
+  for the renderer ports.
+- **[polackangry/POLSKAGUROM](https://github.com/polackangry/POLSKAGUROM)** by polackangry and
+  Muhammad Salman Barkat, for renderer port 2.
+- **[XaviFortes/VIctory-RDNA](https://github.com/XaviFortes/VIctory-RDNA)** by XaviFortes, for the
+  submit-thread changes and `VICTORY_PORT_BUFFERS`.
 - **[VIctory](https://github.com/Marvisak/VIctory)** by Marvisak and its contributors.
 - **[WillyboPeep/victory-all-forks](https://github.com/WillyboPeep/victory-all-forks)**, a merge of
   community forks, where the fixes taken here were found, by AscilCH, C-GDev, David, DocBlack89,
