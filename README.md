@@ -168,8 +168,9 @@ the card, one after the other), not by RAM or VRAM traffic; port 2's real misses
   (`VICTORY_CARD_AWAKE` off); ports 1, 2, 5, 6, `VICTORY_PORT_BUFFERS`, `VICTORY_SYNC_IN_PLACE`,
   `VICTORY_SOFT_VIEWS=copies`, `VICTORY_SKIP_WC_BACK` and `VICTORY_CCD=near` on; port 7 off.
   `-Tuned` sizes the parts that depend on the PC (our helper threads by its logical processors,
-  memory kept in place by its RAM, card buffers by its VRAM); `-RX7900XTX` is the same preset
-  with the exact values of the PC above. `play.ps1 -Tuned -List` prints every setting.
+  memory kept in place by its RAM, card buffers by its VRAM) and is not tested as such;
+  `-RX7900XTX` is the same preset with the exact, measured values of the PC above.
+  `play.ps1 -Tuned -List` prints every setting ([How to run it](#how-to-run-it)).
 - **The host GPU is made before the title starts** (`VICTORY_HOST_EARLY`, on): the title's own
   30 s start-up watchdog no longer ends the run while AMD's driver reads its pipeline cache in
   `D3D12CreateDevice` (5 of 46 starts ended this way before).
@@ -214,8 +215,19 @@ cargo build --locked --release -p victory
 scripts\play.ps1 -Tuned -Build release -Exe <path of your copy's executable>
 ```
 
-`-Tuned` is the preset for any PC: the switches that measured faster are on, and the parts that
-depend on the machine are sized to it when it starts (the first line it prints says for what):
+**Two presets.** `-RX7900XTX` is the measured one: the exact values used for every number in this
+README, made for a build like [the PC it is measured on](#the-pc-it-is-measured-on) (RX 7900 XTX
+with 24 GB of VRAM, a 12-core / 24-thread Ryzen 9 5900X, 32 GB of RAM). `-Tuned` is the generic
+one, **not tested as such on any PC**: the same switches that measured faster, with the parts that
+depend on the machine sized to it when it starts. It is a starting point, and these are the
+tools to tune it to your PC: `-List` prints every setting it would use, the first line it prints
+says what it was sized for, `-Threads <n>` and `-RamGB <n>` size it as for another machine,
+`-More @{...}` sets any value by hand, and the in-run A/B (`VICTORY_AB`, diagnostics build)
+compares two values inside one run. Even on the reference PC `-Tuned` is not
+`-RX7900XTX`: it leaves the card buffer copies to the build's own VRAM-based limit (up to
+8192 MB on a 24 GB card, against the measured 1536 MB), which is not measured.
+
+How `-Tuned` sizes the parts that depend on the machine:
 
 | | 16+ logical processors | 12-15 | 8-11 | under 8 |
 |---|---|---|---|---|
@@ -223,13 +235,12 @@ depend on the machine are sized to it when it starts (the first line it prints s
 
 Memory kept in place (`VICTORY_INPLACE_MB`): 3072 MB with 32 GB of RAM (measured), 1536 with
 16-31 GB, 768 under 16. Card buffer copies (`VICTORY_CARD_BUFFERS_MB`) are left to the build,
-which sizes them by the card's VRAM budget (512 MB up to 12 GB, 2048 MB on 16 GB). Only the
-measured column was run; the others follow the same rule and are a starting point. `-Threads <n>`
-and `-RamGB <n>` size it as for another machine, `-More @{...}` sets any value by hand.
+which sizes them by the card's VRAM budget (512 MB up to 12 GB, 2048 MB on 16 GB, up to
+8192 MB from 20 GB). "Measured" marks the values of the reference PC; the others follow the same
+rule and were not run.
 
-`-RX7900XTX` (old name `-RX7900XT`) is the preset with the exact values of
-[the PC it is measured on](#the-pc-it-is-measured-on), whatever PC runs it; numbers in this README
-are of it. With 12 GB of VRAM or less, watch "Dedicated GPU memory" in Task Manager: on the PC
+`-RX7900XTX` (old name `-RX7900XT`) keeps those exact values whatever PC runs it. With 12 GB of
+VRAM or less, watch "Dedicated GPU memory" in Task Manager: on the PC
 above the title uses about 11 GB of it.
 
 Windows 10/11 x64, a CPU with AVX2, a Direct3D 12 GPU with shader model 6.6 and mesh shaders,
