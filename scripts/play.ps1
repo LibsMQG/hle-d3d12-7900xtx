@@ -101,6 +101,17 @@ if ($Tuned) {
     # lower in every pair; the submitting thread's wait for the pass 3.0 ->
     # 2.3 ms; frame times within the phases' noise; no picture defect.
     $settings.VICTORY_SYNC_IN_PLACE = '1'
+    # Renderer port #6: the guards' lock shared, each block changed under its
+    # own claim, so the title's write faults and the refreshes' looks at view
+    # memory no longer queue behind one another (with it, the submission's
+    # look at what copies nothing is planned beside the submitting thread).
+    # In-run A/B on this preset (jail, standing, 15 phases of 20 s): all
+    # threads' waits for the guards' lock 26.4 -> 4.0 ms a frame, finding
+    # what view memory was written 16.3 -> 8.4 ms, protection changes 4.0 ->
+    # 5.0 ms, frames 2.6% less (median against the OFF neighbours; ON below
+    # them in 6 of 7). Measured before ports 1, 2 and 5 were on it was worse
+    # (protection changes 7 -> 16 ms).
+    $settings.VICTORY_PORT_GUARD = '1'
 }
 foreach ($k in $More.Keys) { $settings[$k] = $More[$k] }
 
