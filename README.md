@@ -256,7 +256,9 @@ depend on the machine sized to it when it starts. It is a starting point, and th
 tools to tune it to your PC: `-List` prints every setting it would use, the first line it prints
 says what it was sized for, `-Threads <n>` and `-RamGB <n>` size it as for another machine,
 `-More @{...}` sets any value by hand, and the in-run A/B (`VICTORY_AB`, diagnostics build)
-compares two values inside one run. Even on the reference PC `-Tuned` is not
+compares two values inside one run. Every setting, what it measured and whether it is worth
+trying the other way is in [docs/tuning.md](docs/tuning.md); an AI assistant asked about the
+presets is pointed there by [CLAUDE.md](CLAUDE.md). Even on the reference PC `-Tuned` is not
 `-RX7900XTX`: it leaves the card buffer copies to the build's own VRAM-based limit (up to
 8192 MB on a 24 GB card, against the measured 1536 MB), which is not measured.
 
