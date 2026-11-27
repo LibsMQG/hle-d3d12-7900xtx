@@ -1570,6 +1570,10 @@ fn wide(jobs: Vec<Job>) {
     }
     let workers = workers();
     let _wide = crate::timeline::span("work spread over threads");
+    // With `VICTORY_WAKE_ONE`: helpers woken, one for each job beyond the
+    // one this thread takes first, at most all of them (all were woken for
+    // every call, 4 for 2 jobs, and those that found nothing slept again).
+    let wake = if wake_one() { (jobs.len() - 1).min(wide_threads()) } else { usize::MAX };
     let left = Arc::new((Mutex::new(jobs.len()), std::sync::Condvar::new()));
     {
         let mut queue = workers.jobs.lock().unwrap_or_else(|e| e.into_inner());
@@ -1586,7 +1590,13 @@ fn wide(jobs: Vec<Job>) {
             }));
         }
     }
-    workers.more.notify_all();
+    if wake >= wide_threads() {
+        workers.more.notify_all();
+    } else {
+        // A helper busy meanwhile looks at the queue before it sleeps, and
+        // this thread takes what nobody took: no job waits for a thread.
+        (0..wake).for_each(|_| workers.more.notify_one());
+    }
     loop {
         let job = workers.jobs.lock().unwrap_or_else(|e| e.into_inner()).pop_front();
         match job {
@@ -1644,6 +1654,27 @@ const WIDE_JOB: usize = 1 << 20;
 /// phases of one run): frames 1.2-1.6 ms longer and the card idle 1.5 ms
 /// longer, although snapshots took 0.4 ms less.
 const WIDE_JOB_SMALL: usize = 256 << 10;
+
+/// Whether [`wide`] wakes only as many helpers as it has jobs for them
+/// (foxhound 8c1fa5d). Off unless `VICTORY_WAKE_ONE=1`; with `VICTORY_AB`
+/// naming it, on and off while the title runs.
+fn wake_one() -> bool {
+    static ON: std::sync::OnceLock<Result<bool, u32>> = std::sync::OnceLock::new();
+    let on = ON.get_or_init(|| {
+        #[cfg(feature = "diagnostics")]
+        if let Some(bit) = crate::ab::bit("VICTORY_WAKE_ONE") {
+            return Err(bit);
+        }
+        Ok(std::env::var_os("VICTORY_WAKE_ONE").is_some_and(|v| v == "1"))
+    });
+    match *on {
+        Ok(on) => on,
+        #[cfg(feature = "diagnostics")]
+        Err(bit) => crate::ab::on(bit),
+        #[cfg(not(feature = "diagnostics"))]
+        Err(_) => false,
+    }
+}
 
 /// The bytes of a piece of work for [`wide`] now.
 fn wide_job() -> usize {
