@@ -2510,7 +2510,7 @@ pub(crate) fn housekeeping() {
     let blocks = crate::pool::texture_blocks();
     tracing::info!(
         "memory housekeeping: card {} MB in use ({} MB counting free heap space) of {} MB (high {} MB, low {} MB); texture copies alive {} MB, \
-         let go for room {} MB ({} MB in the last 5 s), made again {} MB ({} MB in the last 5 s); windows {} alive {} MB, let go {} MB; \
+         let go for room {} MB ({} MB in the last 5 s), made again {} MB ({} MB in the last 5 s); windows {} alive {} MB ({} MB on the card, VICTORY_WINDOWS_BAR_MB), let go {} MB; \
          free RAM {} MB; let go on a real unmap {} ({} MB), held at a sweep {} times, mapped again {} (VICTORY_UNMAP_EXACT={}); \
          title memory really unmapped {} MB in {} calls; out-of-memory fallback ran 0 times (none in this base; host memory \
          pressure {}); windows let go on unmap {} ({} MB) (VICTORY_WINDOW_UNMAP={}); host lists idle {}, let go as idle {}          (VICTORY_LIST_POOL_IDLE_S); \
@@ -2529,6 +2529,7 @@ pub(crate) fn housekeeping() {
         mb(again_since),
         windows,
         mb(window_bytes),
+        mb(crate::shadow::windows_on_card()),
         mb(windows_gone_bytes),
         free_ram,
         exact[0],

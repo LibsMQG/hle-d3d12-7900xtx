@@ -515,12 +515,33 @@ fn window_mapped_most() -> u64 {
 /// Bytes alive of windows in card memory the CPU maps.
 static WINDOW_MAPPED_BYTES: AtomicU64 = AtomicU64::new(0);
 
+/// For the housekeeping line: bytes alive of windows in card memory the CPU
+/// maps ([`window_mapped_most`]).
+#[cfg(windows)]
+pub(crate) fn windows_on_card() -> u64 {
+    WINDOW_MAPPED_BYTES.load(Ordering::Relaxed)
+}
+
 /// A buffer for a window of `size` bytes in card memory the CPU maps, if it is
 /// to be there ([`window_mapped_most`]).
 fn window_mapped_for(size: u64) -> Option<(ID3D12Resource, *mut u8)> {
     let most = window_mapped_most();
     if most == 0 {
         return None;
+    }
+    // Diagnostics: with `VICTORY_AB=<s>,VICTORY_WINDOWS_BAR_MB`, new windows
+    // go to the card only in the phases that have it on (at most
+    // `VICTORY_WINDOWS_BAR_MB` of them, as without), so that one run compares
+    // the PC's free memory and the frames of both sides. A window stays where
+    // it was made until it is let go.
+    #[cfg(all(windows, feature = "diagnostics"))]
+    {
+        static BIT: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+        if let Some(bit) = *BIT.get_or_init(|| crate::ab::bit("VICTORY_WINDOWS_BAR_MB"))
+            && !crate::ab::on(bit)
+        {
+            return None;
+        }
     }
     let host = host()?;
     if let Some([budget, used, ..]) = host.video_memory()
