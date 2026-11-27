@@ -188,6 +188,17 @@ if ($Tuned) {
     # them in 6 of 7). Measured before ports 1, 2 and 5 were on it was worse
     # (protection changes 7 -> 16 ms).
     $settings.VICTORY_PORT_GUARD = '1'
+    # Renderer port #7: a round of the heaps' records is asked for when the
+    # title submits, so it runs while the submission waits in the line, and
+    # the journal's notes are kept in parts with locks of their own. In-run
+    # A/B on this preset with eight list translators (jail, standing, 10
+    # pairs of 20 s phases): the submitting thread's wait for the heaps'
+    # records 6.6 -> 2.4 ms a frame, its work 41.4 -> 38.4 ms, frames 49.1 ->
+    # 46.1 ms median (-6.2 %; ON below its OFF neighbours in 8 of 9 pairs,
+    # one even), p90 55.3 -> 53.5 ms; no picture defect. With four
+    # translators it was neutral: the submitting thread then stood at lists
+    # still being translated, not at the records. Driving not measured.
+    $settings.VICTORY_PORT_JOURNAL = '1'
     # What shaders write to write-combined title memory (the title's CPU writes
     # it and does not read it back), in buffers of 1 MiB and more, is not
     # fetched back from the card (port from fxceless #868 + #1268 via

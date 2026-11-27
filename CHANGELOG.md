@@ -5,6 +5,23 @@ Each entry names the commit and, where there is one, a tag to go back to:
 (after saving anything newer elsewhere). Frame rates are medians of the log's
 frame lines in the world, diagnostics build, on the PC in the README.
 
+## Renderer port 7 on in `-Tuned` (2026-11-27)
+
+`play.ps1 -Tuned` and `-RX7900XTX` turn on renderer port 7
+(`VICTORY_PORT_JOURNAL=1`): a round of the heaps' records is asked for when
+the title submits, so it runs while the submission waits in the line, and the
+journal's notes are kept in parts with locks of their own. Standing in the
+cell the submitting thread sets the frame: it works about 50 ms of a 53 ms
+frame and waits for memory values the card writes the rest, so what is taken
+off its work comes off the frame. In-run A/B on the reference PC with eight
+list translators (jail, standing, 10 pairs of 20 s phases): its wait for the
+heaps' records 6.6 -> 2.4 ms a frame, its work 41.4 -> 38.4 ms, frames 49.1 ->
+46.1 ms median (-6.2 %; ON below its OFF neighbours in 8 of 9 pairs, one
+even), p90 55.3 -> 53.5 ms; the long frames of the 35/65 ms turns 64.5 ->
+59.9 ms; no picture defect. The same A/B with four translators was neutral:
+the submitting thread then stood at lists still being translated. Driving not
+measured.
+
 ## Caches made ahead by `play.ps1 -Warm` (2026-11-27)
 
 Before each start `play.ps1` runs `victory shaders --if-new <the title's
