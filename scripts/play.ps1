@@ -4,8 +4,14 @@
 # -Safe         without the newer, faster ways (the first thing to try when something is wrong)
 # -RayTracing   the title's own ray-traced indirect light: lit interiors, about a third slower
 # -Build        target\diag (the default, the build all measurements are of) or target\release
-# -Tuned        also the settings measured best here (RX 7900 XT, 8-core/16-thread CPU, 32 GB of RAM;
-#               docs/rx7900xt.md); -RX7900XT is the same switch under its old name
+# -Tuned        also the settings measured best, sized to this PC: our helper threads by its
+#               logical processors, memory kept in place by its RAM, the card buffers by its
+#               VRAM (the build's own scaling). The one to start from on any PC.
+# -RX7900XTX    -Tuned with the exact values measured on the reference PC (RX 7900 XTX 24 GB,
+#               Ryzen 9 5900X, 32 GB of RAM; README.md), whatever this PC is; -RX7900XT is
+#               the same switch under its old name
+# -Threads      with -Tuned: size our threads as for this many logical processors (default: this PC's)
+# -RamGB        with -Tuned: size memory kept in place as for this much RAM (default: this PC's)
 # -SkipMovies   skips the opening movies (off by default): once (logos and intros), all (looping
 #               menu backgrounds too, which then stay dark); VICTORY_SKIP_BINK
 # -List         only print the settings this line would start with, and stop
@@ -15,7 +21,10 @@ param(
     [Parameter(Mandatory)][string]$Exe,
     [switch]$Safe,
     [switch]$RayTracing,
-    [Alias('RX7900XT')][switch]$Tuned,
+    [switch]$Tuned,
+    [Alias('RX7900XT')][switch]$RX7900XTX,
+    [ValidateRange(1, 256)][int]$Threads = 0,
+    [ValidateRange(1, 1024)][int]$RamGB = 0,
     [switch]$List,
     [ValidateSet('once', 'all')][string]$SkipMovies = '',
     [ValidateSet('diag', 'release')][string]$Build = 'diag',
@@ -37,14 +46,15 @@ if ($Safe) {
 }
 if ($RayTracing) { $settings.VICTORY_BVH_BUILDER = '1' }
 if ($SkipMovies) { $settings.VICTORY_SKIP_BINK = $(if ($SkipMovies -eq 'all') { 'all' } else { '1' }) }
+if ($RX7900XTX) { $Tuned = $true }
+$machine = ''
 if ($Tuned) {
-    # Shader-write compares on the card for buffers of 1 MiB and more; less committed
-    # memory in windows of title memory (about 5 GB less); smaller texture steps at scene
-    # cuts; windows in private memory used in place; pipelines written down for "victory warm".
-    $settings.VICTORY_CARD_BUFFERS_MIN_MB = '1'; $settings.VICTORY_CARD_BUFFERS_MB = '1536'
+    # Less committed memory in windows of title memory (about 5 GB less); smaller texture
+    # steps at scene cuts; windows in private memory used in place; pipelines written down
+    # for "victory warm".
     $settings.VICTORY_ROOT_WINDOW_MB = '12'; $settings.VICTORY_WINDOW_KB = '1024'
     $settings.VICTORY_TEXTURE_STAGE_MS = '80'
-    $settings.VICTORY_INPLACE = '1'; $settings.VICTORY_INPLACE_MB = '3072'
+    $settings.VICTORY_INPLACE = '1'
     $settings.VICTORY_PIPELINE_BOOK = '1'
     # Measured for 20 fps on the 7800X3D (CHANGELOG.md): the write watch asked
     # early, the heaps' records every 1 ms, longer joined submissions, and the
@@ -56,9 +66,40 @@ if ($Tuned) {
     $settings.VICTORY_TITLE_PRIORITIES = '1'
     # Fewer of our threads translating list calls and comparing title bytes
     # (8 and 6 were for a 24-thread CPU): on 16 the title's own threads ran
-    # short (free roam: 6-13 ms less preparing a frame, CHANGELOG.md).
-    $settings.VICTORY_THIN_THREADS = '4'; $settings.VICTORY_UNDER_THREADS = '3'
-    $settings.VICTORY_LAND_THREADS = '3'
+    # short (free roam: 6-13 ms less preparing a frame, CHANGELOG.md). 4/3/3
+    # is the measured line (16 and 24 threads); fewer logical processors get
+    # fewer of ours, so the title's own threads are not starved: 3/2/2 from 12,
+    # 2/1/1 from 8, 1/1/1 under 8 (scaled by the same rule, not measured).
+    if ($RX7900XTX) {
+        $thin, $under, $land = 4, 3, 3
+    } else {
+        $n = $(if ($Threads) { $Threads } else { [Environment]::ProcessorCount })
+        $thin, $under, $land = $(if ($n -ge 16) { 4, 3, 3 } elseif ($n -ge 12) { 3, 2, 2 } elseif ($n -ge 8) { 2, 1, 1 } else { 1, 1, 1 })
+        $machine += "$n threads"
+    }
+    $settings.VICTORY_THIN_THREADS = "$thin"; $settings.VICTORY_UNDER_THREADS = "$under"
+    $settings.VICTORY_LAND_THREADS = "$land"
+    # Memory kept in place (VICTORY_INPLACE_MB: opening locks the pages into the
+    # PC's memory): 3072 MB measured with 32 GB of RAM; 1536 with 16-31 GB, 768
+    # under 16 (not measured).
+    if ($RX7900XTX) {
+        $settings.VICTORY_INPLACE_MB = '3072'
+    } else {
+        $gb = $(if ($RamGB) { $RamGB } else { [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB) })
+        $settings.VICTORY_INPLACE_MB = $(if ($gb -ge 32) { '3072' } elseif ($gb -ge 16) { '1536' } else { '768' })
+        $machine += ", $gb GB RAM"
+    }
+    # Copies of title buffers in the card's memory (shader-write compares on the
+    # card): the reference PC's 24 GB card takes buffers of 1 MiB and more, up to
+    # 1536 MB. Elsewhere the build sizes them by the card's VRAM budget itself
+    # (16 MiB / 512 MB up to 12 GB, 4 MiB / 2048 MB on 16 GB, 1 MiB / up to
+    # 8192 MB from 20 GB; shadow.rs card_limits): forcing 1536 MB on a 12 GB
+    # card can fill its memory.
+    if ($RX7900XTX) {
+        $settings.VICTORY_CARD_BUFFERS_MIN_MB = '1'; $settings.VICTORY_CARD_BUFFERS_MB = '1536'
+    } else {
+        $machine += ', card buffers by VRAM'
+    }
     # From Op-lite's fork: pool pages given back when free RAM is low, the
     # title's fills not waiting behind flights, and only the changed levels of
     # a texture sent again (free roam: walking's slowest tenth 7.7 -> 14.1 fps).
@@ -154,7 +195,7 @@ if ($Tuned) {
 foreach ($k in $More.Keys) { $settings[$k] = $More[$k] }
 
 # What this start runs with, one line, so a log or a terminal shows which preset it was.
-$names = @(); if ($Tuned) { $names += 'Tuned' }; if ($Safe) { $names += 'Safe' }; if ($RayTracing) { $names += 'RayTracing' }
+$names = @(); if ($RX7900XTX) { $names += 'RX7900XTX' } elseif ($Tuned) { $names += "Tuned for $machine" }; if ($Safe) { $names += 'Safe' }; if ($RayTracing) { $names += 'RayTracing' }
 if ($names.Count -eq 0) { $names = @('base') }
 $line = ($settings.Keys | Sort-Object | ForEach-Object { "$($_ -replace '^VICTORY_', '')=$($settings[$_])" }) -join ' '
 Write-Host "play.ps1 [$($names -join ' + ')] $Build, $($settings.Count) settings: $line"
