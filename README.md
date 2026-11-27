@@ -128,8 +128,16 @@ the card, one after the other), not by RAM or VRAM traffic; port 2's real misses
 
 ## Known limits
 
-- Two device methods that create pipelines are not implemented yet; their draws, together with
-  about 200 shaders the recompiler cannot translate yet, are dropped (about 340 draws a frame).
+- Ray-traced light is off by default: the stages of the title's ray-tracing structure builder (a
+  few hundred dispatches a frame) are dropped, and an estimate (`VICTORY_AMBIENT`) stands in for
+  the indirect light. `scripts\play.ps1 -RayTracing` runs the builder
+  ([docs/fork-ray-tracing.md](docs/fork-ray-tracing.md)): lit interiors at a cost in card time,
+  not yet measured on this tree. These stages are the only dispatches the runs drop, apart from
+  pipelines still being compiled.
+- Two device methods that create pipelines from native code pieces are not implemented; the title
+  then makes the same pipelines through the stream method (measured), so no draw is lost. The 203
+  shaders the recompiler cannot translate (geometry shaders of one voxelization pass, three text
+  programs, five shadow tracers) are in no pipeline the title draws or dispatches with.
 - Moving fast through new areas: pipelines are compiled when first met (`victory warm --used`
   builds them ahead), and with 32 GB of RAM free memory falls to 1-2 GB, so the title's memory
   remapping costs 100-200 ms a second.

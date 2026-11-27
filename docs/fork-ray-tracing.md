@@ -127,8 +127,9 @@ dispatches, faults and what came.
   (cause unknown; do not try).
 - Five shadow-mask trace programs do not translate (a structure's address out
   of a descriptor picked from the heap by a computed index: the host would have
-  to give a table of addresses by slot). The title did not create them in any
-  run so far.
+  to give a table of addresses by slot). The title creates their pipelines
+  while it loads but dispatched none of them in any run so far: it traces with
+  the `Checkerboard` variant, which translates.
 - An access to a page that is not there is lost (a read gives zero, a store is
   dropped).
 - Not publicly documented, and assumed: the instruction's rounding, the order
