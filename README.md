@@ -34,6 +34,11 @@ from the card's sensors (4 samples a second); the base also keeps the card's clo
 purpose, which is part of the power difference. One run per side (40-60 s): the same build
 varies by about 15 ms from run to run.
 
+Since then (not yet measured side by side with the base): `VICTORY_SKIP_WC_BACK` took the
+standing frame from 70.1 to **54.4 ms** (mean, in-run A/B on `3430ee0`, faster in 12 of 12
+pairs) and the submitting thread's work from 55.2 to **35.8 ms**; `VICTORY_CCD=far` another
+-3.3 %. See [Milestones](#milestones).
+
 **This repository contains no game files, code or assets.** You need your own copy of the
 software you run with it. The asset policy ([docs/asset-policy.md](docs/asset-policy.md)) is
 checked by `cargo xtask policy` and by the pre-commit hook (`cargo xtask install-hooks`).
@@ -67,9 +72,12 @@ Standing still in one fixed test spot, release or diagnostics build, median fram
 | 2026-11-27 | Renderer ports 1 and 5, then the RDNA3 fork's submit-thread changes and buffers in place: about 70 ms; the submitting thread's work went from ~77 to ~57 ms a frame. |
 | 2026-11-27 | Renderer port 2 (descriptor stores tell their slots): **about 68 ms (14.7 fps)**, submitting thread ~51 ms; no picture defects standing, walking or moving fast. |
 | 2026-11-27 | Descriptor records compared in place, dynamic bits, prelude pool: **64.7 ms (15.5 fps)**, submitting thread 48 ms, GPU at 199 W instead of the base's 273 W ([Results at a glance](#results-at-a-glance)). |
+| 2026-11-27 | Renderer port 6 on (guards' lock waits 26.4 -> 4.0 ms a frame, frames -2.6 %); `VICTORY_SOFT_VIEWS=copies` (driving: slow frames about halved, p99 457 -> 271 ms). |
+| 2026-11-27 | Write-combined memory of 1 MiB and over kept on the card (`VICTORY_SKIP_WC_BACK`, from klbf-lab): **about 54 ms (18.4 fps)**, submitting thread ~36 ms, the card waiting for it 22.5 -> 10.0 ms a frame; then `VICTORY_CCD=far` (our threads off the title's core complex), -3.3 %. |
 
-Moving fast through the world is still far slower (about 6-12 fps): pipelines met for the first time
-and memory pressure, see [Known limits](#known-limits).
+Moving fast through the world is still far slower (driving: median about 77 ms, p99 about 240 ms,
+with everything in `-Tuned` on): pipelines met for the first time and memory pressure, see
+[Known limits](#known-limits).
 
 ## Where the code comes from
 
@@ -79,11 +87,12 @@ Every commit taken from elsewhere keeps its author and, where it was a cherry-pi
 | Source | What it is | What we took, and why |
 |---|---|---|
 | [YukiRyuu/RYUKI-7900XT](https://github.com/YukiRyuu/RYUKI-7900XT) | 7900 XT/XTX fork with 32 GB work and many community forks merged | **The base tree** (the root commit). Chosen because it was already faster than our first line, so our work was ported onto it piece by piece. |
-| [avatarmanz/VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX) | 7900 XTX fork that carries the upstream renderer patches | **Renderer ports 1, 5, 6, 7** and the halving search for ranges asked ahead. Aim: the submitting thread, which is what limits the frame. Ports 1 and 5 are on in `play.ps1 -Tuned`; 6 and 7 stay off (measured: no gain or worse). |
+| [avatarmanz/VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX) | 7900 XTX fork that carries the upstream renderer patches | **Renderer ports 1, 5, 6, 7** and the halving search for ranges asked ahead. Aim: the submitting thread, which is what limits the frame. Ports 1, 5 and 6 are on in `play.ps1 -Tuned`; 7 stays off (measured: no gain). Port 6 (`VICTORY_PORT_GUARD`, the guards' lock shared, each block under its own claim) was worse before ports 1, 2 and 5 were on; measured again on top of them: the threads' waits for the guards' lock 26.4 -> 4.0 ms a frame, frames -2.6 %. |
 | [polackangry/POLSKAGUROM](https://github.com/polackangry/POLSKAGUROM) | NVIDIA-oriented fork on the upstream line | **Renderer port 2** (`VICTORY_PORT_DESCRIPTORS`): the title's descriptor-record stores report their slots instead of the whole view heap being scanned. Submitting thread -4 ms, heap rounds 28 -> 19 ms. On in `-Tuned`. |
 | [XaviFortes/VIctory-RDNA](https://github.com/XaviFortes/VIctory-RDNA) | RX 7900 XT fork focused on the submitting thread | AVX2 compare in `Shadow::take`, a lock-free "anything pending?" flag with a `RwLock`, 4 MiB journal pieces, `VICTORY_PORT_BUFFERS` (title buffers above 4 GiB in place, big ones kept in VRAM). Together about -5 ms a frame. Later `VICTORY_UNGUARD_RUNS` (guarded blocks given back with one protection change a run; on): in two drives its phases 2-4% below their neighbours, inside the noise. Its unconditional in-place card-step changes and the per-part buffer spans were left out (no effect here or twice the cost; correctness risk). |
 | Op-lite's fork | Community fork with memory hooks and work on freezes | **`VICTORY_SOFT_VIEWS=copies`** (ported by hand): the views the title's batch page-mapping copies make at its GPU view are kept in our books and mapped only when something touches them, in place of a map and an unmap call a page. In two drives the remapping fell from 316 to 118 ms a second and the slow frames by half (p99 457 -> 271 ms). On in `-Tuned`. Its hooks that patch the title's memory calls were left out (stale textures by its own account, or retired). |
 | [avatarmanz/VIctory-7900XTX issue 399](https://github.com/avatarmanz/VIctory-7900XTX/issues/399) | A patch posted by motioncsgo in that fork's issues | **`VICTORY_CCD=far`** (adapted to this tree's simpler thread placement): on a processor with two or more last-level caches of one size (a Ryzen with two core complexes), our own threads prefer the cores without processor 0, where the title pins its threads. In-run A/B on a Ryzen 9 5900X (18 pairs of 20 s phases, standing): frames -3.3%, p90 -5.0%, lower in 17 of 18; the submitting thread's work 55.1 -> 53.0 ms a frame. On in `-Tuned`; nothing changes on one complex, X3D or two kinds of cores. Its `VICTORY_LANE_CORE` part was not taken (not in this tree). |
+| [PastiiJay/klbf-lab](https://github.com/PastiiJay/klbf-lab) | Community fork that gathers fixes from others, among them fxceless/victory-fork pull requests | **`VICTORY_SKIP_WC_BACK=1`** (fxceless/victory-fork #868 by Chipsraine, reservation fix by iGoldenNinja, 1 MiB gate from #1268 by Proudnoob4): what shaders write to title memory reserved write-combined (written by its CPU, never read back) is no longer fetched back from the card's copy, for buffers of 1 MiB and over (the small ones are, since skipping them left rooms dark). In-run A/B (standing, 12 pairs): frames 70.1 -> 54.4 ms (-22.9 % median), the submitting thread's work 55.2 -> 35.8 ms; in drives no errors and no picture defect from it. On in `-Tuned`. Also two fixes, on: dynamic descriptor slots go back only to the heap that took them; a page the title guards itself keeps its guard. And `VICTORY_OUTPUT=<w>x<h>` / `VICTORY_RENDER_SCALE` (off). Its movie skip was left out (`VICTORY_SKIP_BINK` already does it). |
 | [zeex64/victory-7900xtx](https://github.com/zeex64/victory-7900xtx) | Fork on the upstream line, run under Linux/Proton | **`VICTORY_SYNC_IN_PLACE`** (ported, adapted to port 2's parts): the heaps' descriptor records read where they are and compared with AVX2 as read, in place of a copy of each changed page first. Reading and comparing 4.6 -> 3.3 ms a frame, the submitting thread's wait for it -0.4 ms. On in `-Tuned`. Its other speed switches were already here (`VICTORY_SLOT_BITS`) or turned off by its own measurements; its Linux and Wine work does not apply. |
 | [WillyboPeep/victory-all-forks](https://github.com/WillyboPeep/victory-all-forks) | A merge of many community forks | **Correctness fixes**, not speed: use-after-free in audio, queues and fences; save-data validation; loader, GPU, shader-recompiler and DirectStorage fixes; frame-wait ticks; Bink skip. Full list under [Fixes taken from others](#fixes-taken-from-others). |
 | [VIctory](https://github.com/Marvisak/VIctory) | The upstream project | Through all of the above. One idea re-written by us: a submission's one asking holds every range over both its parts (after upstream `e000e02`). |
@@ -150,7 +159,12 @@ the card, one after the other), not by RAM or VRAM traffic; port 2's real misses
   are now opt-in; port 2 can be flipped inside a run. Changes were measured with the base
   tree's in-run A/B (`VICTORY_AB`), since the same build varies ~15 ms from run to run.
 - **Measured defaults in `play.ps1 -Tuned`**: card clocks no longer kept up
-  (`VICTORY_CARD_AWAKE` off); ports 1, 5, 2 and `VICTORY_PORT_BUFFERS` on; ports 6 and 7 off.
+  (`VICTORY_CARD_AWAKE` off); ports 1, 2, 5, 6, `VICTORY_PORT_BUFFERS`, `VICTORY_SYNC_IN_PLACE`,
+  `VICTORY_SOFT_VIEWS=copies`, `VICTORY_SKIP_WC_BACK` and `VICTORY_CCD=far` on; port 7 off.
+  `play.ps1 -Tuned -List` prints every setting.
+- **The host GPU is made before the title starts** (`VICTORY_HOST_EARLY`, on): the title's own
+  30 s start-up watchdog no longer ends the run while AMD's driver reads its pipeline cache in
+  `D3D12CreateDevice` (5 of 46 starts ended this way before).
 - **One fix reverted**: the quad-read derivative change from the all-forks merge was taken out
   again on this tree.
 - **CI**: clippy clean with `-D warnings` in both CI variants; tests that share global state
@@ -172,6 +186,9 @@ the card, one after the other), not by RAM or VRAM traffic; port 2's real misses
   --used` builds them ahead), and with 32 GB of RAM free memory falls to 1-2 GB. The title's
   memory remapping was 300-850 ms a second; with `VICTORY_SOFT_VIEWS=copies` (on in `-Tuned`)
   about 120, nearly all of it the title's own mapping calls, and driving runs at about 9 fps.
+- Trees that vanish and come back, and white dots on some walls, happen with every switch of
+  `-Tuned` on or off (checked one by one in drives; port 6 also in an in-run A/B in front of an
+  interior wall, where its textures looked the same on and off).
 - After any change to the shader recompiler the first start rebuilds the pipeline cache: several
   minutes with missing textures before the picture is complete.
 
@@ -207,6 +224,9 @@ authors.
 - **[XaviFortes/VIctory-RDNA](https://github.com/XaviFortes/VIctory-RDNA)** by XaviFortes, for the
   submit-thread changes, `VICTORY_PORT_BUFFERS` and `VICTORY_UNGUARD_RUNS`.
 - **Op-lite's fork** by Op-lite, for `VICTORY_SOFT_VIEWS`.
+- **[PastiiJay/klbf-lab](https://github.com/PastiiJay/klbf-lab)** by PastiiJay, for
+  the two descriptor and guard fixes and the output-size switches; and Chipsraine, iGoldenNinja
+  and Proudnoob4 (fxceless/victory-fork #868 and #1268) for `VICTORY_SKIP_WC_BACK`.
 - **motioncsgo**, for the thread placement on processors with two core complexes (`VICTORY_CCD`,
   from the patch in [avatarmanz/VIctory-7900XTX issue 399](https://github.com/avatarmanz/VIctory-7900XTX/issues/399)).
 - **[VIctory](https://github.com/Marvisak/VIctory)** by Marvisak and its contributors.
