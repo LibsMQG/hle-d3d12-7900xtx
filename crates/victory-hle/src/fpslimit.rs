@@ -72,7 +72,7 @@ unsafe extern "C" fn limiter_called(regs: *mut Regs) {
     TAKEN.with(|t| t.borrow_mut().push((regs.ret, was)));
     regs.ret = AFTER.load(Ordering::Relaxed) as u64;
     let n = LET_THROUGH.fetch_add(1, Ordering::Relaxed) + 1;
-    if n == 1 || n % 10_000 == 0 {
+    if n == 1 || n.is_multiple_of(10_000) {
         tracing::info!(
             n,
             "VICTORY_FPS: the title's frame limiter let a light frame through"
