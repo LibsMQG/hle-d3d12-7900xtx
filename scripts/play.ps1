@@ -88,6 +88,13 @@ if ($RX7900XT) {
     # idle let-go -0.2%.
     $settings.VICTORY_PRELUDE_POOL = '1'
     $settings.VICTORY_LIST_POOL_IDLE_S = '10'
+    # The heaps' descriptor records read where they are and compared with AVX2
+    # as read, in place of a copy of each changed page first (from zeex64's
+    # fork). In-run A/B (19 pairs of 20 s phases: jail, cutscenes, swimming,
+    # standing in the world): reading and comparing 4.6 -> 3.3 ms a frame,
+    # lower in every pair; the submitting thread's wait for the pass 3.0 ->
+    # 2.3 ms; frame times within the phases' noise; no picture defect.
+    $settings.VICTORY_SYNC_IN_PLACE = '1'
 }
 foreach ($k in $More.Keys) { $settings[$k] = $More[$k] }
 
