@@ -54,14 +54,15 @@ pub(crate) fn candidate(handle: u64) {
 /// The addresses watched now, a debug register each (0: none).
 static ARMED: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
 
-/// `DR7` for watching writes to the eight bytes at each nonzero address of
-/// `armed`: a local enable bit each (bit 2n), its condition 01 (writes, bits
-/// 16 + 4n) and its length 10 (eight bytes, bits 18 + 4n).
+/// `DR7` for watching writes to the four bytes at each nonzero address of
+/// `armed` (a record's tag: a write of other data after it, leaving an old
+/// tag in place, is not one): a local enable bit each (bit 2n), its condition
+/// 01 (writes, bits 16 + 4n) and its length 11 (four bytes, bits 18 + 4n).
 pub(crate) fn dr7_for(armed: [u64; 4]) -> u64 {
     let mut dr7 = 0u64;
     for (n, &at) in armed.iter().enumerate() {
         if at != 0 {
-            dr7 |= 1 << (2 * n) | 0b01 << (16 + 4 * n) | 0b10 << (18 + 4 * n);
+            dr7 |= 1 << (2 * n) | 0b01 << (16 + 4 * n) | 0b11 << (18 + 4 * n);
         }
     }
     dr7
@@ -113,14 +114,14 @@ fn install() {
         // A thread whose registers we set and that stops with no hit said:
         // ours too (nothing else here steps threads), taken and gone on from.
         let mut ours = hits == 0 && context.Dr7 & 0xff != 0 && ARMED.iter().any(|a| a.load(Relaxed) != 0);
+        let mut noted = [0u64; 4];
         for (n, &at) in watched.iter().enumerate() {
             let armed = ARMED[n].load(Relaxed);
             if hits >> n & 1 == 0 || (at == 0 && armed == 0) {
                 continue;
             }
             ours = true;
-            // SAFETY: the thread just wrote there; the context is its own.
-            unsafe { note(if at != 0 { at } else { armed }, context) };
+            noted[n] = if at != 0 { at } else { armed };
             // This thread watches that slot no more until the next arming.
             context.Dr7 &= !(1 << (2 * n));
         }
@@ -129,11 +130,25 @@ fn install() {
         }
         context.Dr6 = 0;
         context.ContextFlags |= CONTEXT_DEBUG_REGISTERS_AMD64;
+        // Never inside itself: a write the noting makes (a stack the watch
+        // lies on after the title remapped the heap's pages) is let go.
+        if !INSIDE.with(|inside| inside.replace(true)) {
+            for &at in noted.iter().filter(|&&at| at != 0) {
+                // SAFETY: the thread just wrote there; the context is its own.
+                unsafe { note(at, context) };
+            }
+            INSIDE.with(|inside| inside.set(false));
+        }
         EXCEPTION_CONTINUE_EXECUTION
     }
     // SAFETY: a handler that only reads the exception it is given and the
     // eight bytes the watched write just wrote.
     unsafe { AddVectoredExceptionHandler(1, Some(on_step)) };
+}
+
+thread_local! {
+    /// Whether this thread is noting a write ([`install`]'s handler).
+    static INSIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Notes the write that stopped `context`'s thread at the watched `at`.
@@ -149,10 +164,14 @@ unsafe fn note(at: u64, context: &windows_sys::Win32::System::Diagnostics::Debug
     // SAFETY: writes the current thread's stack bounds.
     unsafe { GetCurrentThreadStackLimits(&mut low, &mut high) };
     let mut frames = [0u64; FRAMES];
-    unwind(context, low, high, &mut frames);
-    // SAFETY: the bytes the thread just wrote, and the eight after them in
-    // the same slot.
-    let (first, second) = unsafe { ((at as *const u64).read_volatile(), ((at + 8) as *const u64).read_volatile()) };
+    frames[0] = context.Rip;
+    // SAFETY: reads only this thread's stack, between its pointer and its base.
+    unsafe { title_words(context.Rsp as usize, low, high, &mut frames[1..]) };
+    // The watched slot is 32 bytes on a 32-byte boundary: its sixteen bytes
+    // from `at` are on the page just written.
+    let slot = at & !31;
+    // SAFETY: the bytes of the slot the thread just wrote to.
+    let (first, second) = unsafe { ((slot as *const u64).read_volatile(), ((slot + 8) as *const u64).read_volatile()) };
     // SAFETY: on this thread.
     let thread = u64::from(unsafe { GetCurrentThreadId() });
     let words = [at, thread, first, second];
@@ -162,39 +181,29 @@ unsafe fn note(at: u64, context: &windows_sys::Win32::System::Diagnostics::Debug
     EVENT_SEQ[place].store(n + 1, Release);
 }
 
-/// The return addresses above `context` (its instruction first), by the
-/// unwind data of each image, as `victory_loader`'s crash reports walk them;
-/// code without unwind data is taken to have its return address at `rsp`.
-/// Allocates nothing.
-fn unwind(context: &windows_sys::Win32::System::Diagnostics::Debug::CONTEXT, low: usize, high: usize, frames: &mut [u64; FRAMES]) {
-    use windows_sys::Win32::System::Diagnostics::Debug::{CONTEXT, RtlLookupFunctionEntry, RtlVirtualUnwind, UNW_FLAG_NHANDLER};
-    /// `RtlVirtualUnwind` writes the context with 16-byte aligned stores.
-    #[repr(C, align(16))]
-    struct Aligned(CONTEXT);
-    let mut aligned = Aligned(*context);
-    let c = &mut aligned.0;
-    frames[0] = c.Rip;
-    for frame in frames.iter_mut().skip(1) {
-        let rsp = c.Rsp as usize;
-        if rsp < low || rsp + 8 > high {
-            break;
+/// The words on the stack from `rsp` up (2 KiB at most, inside `low..high`)
+/// that are addresses in the title's image, likely its return addresses,
+/// into `out` in the order found. Not a walk by unwind data: a write the
+/// watch stops may be in the system's own exception dispatch, where such a
+/// walk can fault inside this handler. Allocates nothing.
+///
+/// # Safety
+/// `low..high` is the current thread's stack and `rsp` its pointer.
+unsafe fn title_words(rsp: usize, low: usize, high: usize, out: &mut [u64]) {
+    let (base, size) = crate::port_descriptors::title_image();
+    if size == 0 || rsp < low || rsp >= high {
+        return;
+    }
+    let (mut at, end) = (rsp & !7, high.min(rsp.saturating_add(0x800)));
+    let mut n = 0;
+    while at + 8 <= end && n < out.len() {
+        // SAFETY: between the stack pointer and the stack's base: committed.
+        let word = unsafe { (at as *const usize).read() };
+        if word >= base && word < base + size {
+            out[n] = word as u64;
+            n += 1;
         }
-        let mut image = 0;
-        // SAFETY: looks up the function table entry covering `Rip`, if any.
-        let entry = unsafe { RtlLookupFunctionEntry(c.Rip, &mut image, std::ptr::null_mut()) };
-        if entry.is_null() {
-            // SAFETY: `rsp` is inside this thread's stack.
-            c.Rip = unsafe { (rsp as *const u64).read() };
-            c.Rsp += 8;
-        } else {
-            let (mut data, mut establisher) = (std::ptr::null_mut(), 0);
-            // SAFETY: `entry` belongs to `image`; the context is our copy.
-            unsafe { RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, c.Rip, entry, c, &mut data, &mut establisher, std::ptr::null_mut()) };
-        }
-        if c.Rip == 0 {
-            break;
-        }
-        *frame = c.Rip;
+        at += 8;
     }
 }
 
@@ -353,8 +362,9 @@ pub(crate) fn line(frames: f64) {
     }
     let upto = NEXT_EVENT.load(Acquire);
     let from = READ_UPTO.swap(upto, Relaxed).max(upto.saturating_sub(EVENTS as u64));
-    // Writes by place (stubs, title, ours, runtime), and of them those that left a view record.
-    let (mut all, mut views) = ([0u64; 4], [0u64; 4]);
+    // Writes by place (stubs, title, ours, runtime), of them those that left a
+    // live view record, and those that left a tag over other data.
+    let (mut all, mut views, mut stale) = ([0u64; 4], [0u64; 4], 0u64);
     let mut writers = WRITERS.lock().unwrap_or_else(|e| e.into_inner());
     let writers = writers.get_or_insert_with(Writers::default);
     for n in from..upto {
@@ -363,7 +373,13 @@ pub(crate) fn line(frames: f64) {
             continue;
         }
         let words: Vec<u64> = EVENT[place].iter().map(|w| w.load(Relaxed)).collect();
-        let view = words[2] as u32 == crate::descriptor::VIEW_TAG;
+        // A live view record now (a tag over words that name no live view
+        // is other data over an old record).
+        let kind = crate::descriptor::record_kind([words[2] as u32, (words[2] >> 32) as u32, words[3] as u32]);
+        if kind == 1 {
+            stale += 1;
+        }
+        let view = kind >= 2;
         let frames: Vec<u64> = words[4..].iter().copied().take_while(|&f| f != 0).collect();
         let Some(&first) = frames.first() else { continue };
         let (writer, at) = locate(first);
@@ -403,8 +419,8 @@ pub(crate) fn line(frames: f64) {
     let f = frames.max(1.0);
     tracing::info!(
         "renderer port 2's writer trace (VICTORY_PORT_DESCRIPTORS_TRACE) per frame: {:.2} armings over {} threads; writes caught {:.2} \
-         (the patched stores' code {:.2}, the title's {:.2}, ours {:.2}, the runtime's {:.2}), of them leaving a view record \
-         {:.2} (stores {:.2}, title {:.2}, ours {:.2}, runtime {:.2}); since the start, the writers of view records: {}",
+         (the patched stores' code {:.2}, the title's {:.2}, ours {:.2}, the runtime's {:.2}), of them leaving a live view record \
+         {:.2} (stores {:.2}, title {:.2}, ours {:.2}, runtime {:.2}), a tag over other data {:.2}; since the start, the writers of live view records: {}",
         ARMINGS.swap(0, Relaxed) as f64 / f,
         THREADS.load(Relaxed),
         all.iter().sum::<u64>() as f64 / f,
@@ -417,6 +433,7 @@ pub(crate) fn line(frames: f64) {
         views[1] as f64 / f,
         views[2] as f64 / f,
         views[3] as f64 / f,
+        stale as f64 / f,
         if named.is_empty() { "none yet".into() } else { named.join("; ") }
     );
 }
@@ -426,23 +443,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dr7_watches_eight_byte_writes_where_asked() {
+    fn dr7_watches_four_byte_writes_where_asked() {
         assert_eq!(dr7_for([0; 4]), 0);
-        // DR0: L0 (bit 0), write (01 at 16), eight bytes (10 at 18).
-        assert_eq!(dr7_for([0x1000, 0, 0, 0]), 0b1 | 0b01 << 16 | 0b10 << 18);
-        // DR2: L2 (bit 4), write (01 at 24), eight bytes (10 at 26).
-        assert_eq!(dr7_for([0, 0, 0x2000, 0]), 0b1 << 4 | 0b01 << 24 | 0b10 << 26);
-        assert_eq!(dr7_for([8, 16, 24, 32]), 0x5 | 0x50 | 0b1001_1001_1001_1001 << 16);
+        // DR0: L0 (bit 0), write (01 at 16), four bytes (11 at 18).
+        assert_eq!(dr7_for([0x1000, 0, 0, 0]), 0b1 | 0b01 << 16 | 0b11 << 18);
+        // DR2: L2 (bit 4), write (01 at 24), four bytes (11 at 26).
+        assert_eq!(dr7_for([0, 0, 0x2000, 0]), 0b1 << 4 | 0b01 << 24 | 0b11 << 26);
+        assert_eq!(dr7_for([8, 16, 24, 32]), 0x55 | 0xdddd << 16);
     }
 
-    /// A write to a watched slot by another thread is caught once, with the
-    /// bytes it left and the writer's frames; the next write is not.
+    /// A record's slot: 32 bytes on a 32-byte boundary, as in the title's heap.
+    #[repr(C, align(32))]
+    struct Slot([u64; 4]);
+
+    /// A write to a watched slot's tag by another thread is caught once, with
+    /// the bytes it left and the writer's place; the next write is not, nor a
+    /// write after the tag.
     #[test]
     fn a_watched_write_is_caught_once_with_its_writer() {
         use std::sync::mpsc::channel;
         install();
-        let slot: &'static mut [u64; 4] = Box::leak(Box::new([0u64; 4]));
-        let at = slot.as_ptr() as u64;
+        let slot: &'static mut Slot = Box::leak(Box::new(Slot([0u64; 4])));
+        let at = slot.0.as_ptr() as u64;
         let target = at as usize;
         let (id_tx, id_rx) = channel();
         let (go_tx, go_rx) = channel::<()>();
@@ -454,6 +476,8 @@ mod tests {
             let p = target as *mut u64;
             // SAFETY: the leaked slot, written by this thread alone now.
             unsafe {
+                // After the tag: not watched.
+                p.cast::<u32>().add(1).write_volatile(9);
                 p.write_volatile(u64::from(crate::descriptor::VIEW_TAG) | 7 << 32);
                 p.write_volatile(u64::from(crate::descriptor::VIEW_TAG) | 8 << 32);
             }
@@ -477,6 +501,6 @@ mod tests {
         // The first write's bytes: the watch stops the thread right after it.
         assert_eq!(EVENT[p][2].load(Relaxed), u64::from(crate::descriptor::VIEW_TAG) | 7 << 32);
         assert_ne!(EVENT[p][4].load(Relaxed), 0, "the writer's place");
-        assert_eq!(slot[0], u64::from(crate::descriptor::VIEW_TAG) | 8 << 32);
+        assert_eq!(slot.0[0], u64::from(crate::descriptor::VIEW_TAG) | 8 << 32);
     }
 }

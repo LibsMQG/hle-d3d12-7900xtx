@@ -524,6 +524,11 @@ pub(crate) fn sync_heaps() {
                     // The records of told slots, to know copies of them by.
                     out.told.extend(records[..(count * step) as usize].chunks_exact(step as usize).map(crate::port_descriptors::record_hash));
                 }
+                // Renderer port #2's sorting (diagnostics): the heads (tag,
+                // index, generation) last seen of the fallback's records.
+                // SAFETY: the parts are apart, as for `changes` below.
+                #[cfg(feature = "diagnostics")]
+                let heads = if sort && check { unsafe { copied.heads(first as u32, count as usize) } } else { Vec::new() };
                 // Only the records that are not the ones last seen
                 // there (`host::Copied::changes`).
                 changed.clear();
@@ -541,7 +546,19 @@ pub(crate) fn sync_heaps() {
                     if check && !crate::port_descriptors::was_taken_in_check(&taken_in_check, index) {
                         // Renderer port #2's fallback: what no mark told of.
                         let record = records.get(at..at + step as usize).unwrap_or_default();
-                        crate::port_descriptors::missed(index, start + u64::from(index) * step, !samplers && word(0) == VIEW_TAG, host.copied_tabled(index, frame), record);
+                        // Whether its tag, index or generation changed, or only the bytes after them.
+                        #[cfg(feature = "diagnostics")]
+                        let head_changed = heads.get((u64::from(index) - first) as usize).is_none_or(|h| record.get(..12) != Some(&h[..]));
+                        #[cfg(not(feature = "diagnostics"))]
+                        let head_changed = true;
+                        crate::port_descriptors::missed(
+                            index,
+                            start + u64::from(index) * step,
+                            !samplers && word(0) == VIEW_TAG,
+                            host.copied_tabled(index, frame),
+                            record,
+                            head_changed,
+                        );
                     }
                     if !samplers && word(0) == VIEW_TAG {
                         // A draw's own table: the draw makes what it
@@ -1434,6 +1451,23 @@ fn view_at(i: u32, generation: u32) -> Option<View> {
         CONSTANT => Some(constant_of(i, generation)),
         PLACED => views_read().placed_of(i, generation),
         _ => None,
+    }
+}
+
+/// Renderer port #2's diagnostics: what the record words `[tag, i,
+/// generation]` are: 0 no view record (no tag); 1 a tag over words that name
+/// no live view (other data written over an old record); 2 a live view of the
+/// table or of placed memory; 3 a constant buffer view (any words name one).
+#[cfg(all(windows, feature = "diagnostics"))]
+pub(crate) fn record_kind(words: [u32; 3]) -> u32 {
+    if words[0] != VIEW_TAG {
+        0
+    } else if view_at(words[1], words[2]).is_none() {
+        1
+    } else if words[2] >> KIND_SHIFT == CONSTANT {
+        3
+    } else {
+        2
     }
 }
 

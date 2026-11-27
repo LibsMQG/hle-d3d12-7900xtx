@@ -460,8 +460,10 @@ fn should_warn_missed(n: u64) -> bool {
 }
 
 /// The fallback found slot `index` (at `handle`) with a new record (`record`,
-/// its bytes as read): a view record that no mark told of is counted and said.
-pub(crate) fn missed(index: u32, handle: u64, view: bool, tabled: bool, record: &[u8]) {
+/// its bytes as read; `head_changed`: its tag, index or generation changed,
+/// not only the bytes after them): a view record that no mark told of is
+/// counted and said.
+pub(crate) fn missed(index: u32, handle: u64, view: bool, tabled: bool, record: &[u8], head_changed: bool) {
     if !view {
         CHECKED[2].fetch_add(1, Relaxed);
         return;
@@ -483,9 +485,28 @@ pub(crate) fn missed(index: u32, handle: u64, view: bool, tabled: bool, record: 
         let hash = record_hash(record);
         with_sort(|s| s.missed.push((index, handle, hash, kind)));
     }
-    // Diagnostics: a slot for the writer trace to watch.
+    // Diagnostics: whether it is a view at all now (a tag left over other
+    // data names none) and a new one; such a slot is one for the writer
+    // trace to watch.
     #[cfg(feature = "diagnostics")]
-    crate::port_trace::candidate(handle);
+    {
+        let word = |n: usize| record.get(4 * n..4 * n + 4).and_then(|b| b.try_into().ok()).map_or(0, u32::from_le_bytes);
+        let kind = crate::descriptor::record_kind([word(0), word(1), word(2)]);
+        if sort_on() {
+            let at = match (kind, head_changed) {
+                (0 | 1, _) => 17,
+                (_, false) => 16,
+                (3, true) => 15,
+                _ => 14,
+            };
+            SORTED[at].fetch_add(1, Relaxed);
+        }
+        if kind >= 2 && head_changed {
+            crate::port_trace::candidate(handle);
+        }
+    }
+    #[cfg(not(feature = "diagnostics"))]
+    let _ = head_changed;
     let n = MISSED_ALL.fetch_add(1, Relaxed);
     let rip = a.writers.get(((handle - a.start) >> 16) as usize).map_or(0, |w| w.load(Relaxed));
     let (base, size) = (IMAGE[0].load(Relaxed), IMAGE[1].load(Relaxed));
@@ -564,8 +585,12 @@ fn with_sort<R>(f: impl FnOnce(&mut Sort) -> R) -> R {
 /// in their 32 slots, else in their 1024, else neither; the same bytes as a
 /// record told this frame, the frame before, neither; on a 4 KiB part the
 /// watch said was written, on one it did not, not known (the watch said the
-/// whole page).
-static SORTED: [AtomicU64; 14] = [const { AtomicU64::new(0) }; 14];
+/// whole page); and (in [`missed`]) a live view of the table or of placed
+/// memory with its head (tag, index, generation) changed, a constant buffer
+/// view with its head changed (any words name one), a view whose head is as
+/// last seen (only the bytes after it changed), no live view (a tag left over
+/// other data).
+static SORTED: [AtomicU64; 18] = [const { AtomicU64::new(0) }; 18];
 
 /// The end of a round of the marked heap at frame `frame` ([`sort_on`]): its
 /// told runs and the hashes of their records; the records missed in it sorted.
@@ -770,7 +795,7 @@ pub(crate) fn line(frames: f64) {
             "renderer port 2's missed view records sorted (VICTORY_PORT_DESCRIPTORS_SORT=1) per frame: {:.1}; by kind: {:.1} entries of the views' table, \
              {:.1} constant buffer views, {:.1} views of placed memory, {:.1} other; a slot told this frame or the one before in their 32 slots {:.1}, \
              only in their 1024 slots {:.1}, in neither {:.1}; the same bytes as a record told this frame {:.1}, the frame before {:.1}, neither {:.1}; \
-             on a 4 KiB part the write watch said was written {:.1}, on one it did not {:.1}, not known (the watch said the whole page) {:.1}",
+             on a 4 KiB part the write watch said was written {:.1}, on one it did not {:.1}, not known (the watch said the whole page) {:.1}; \n             now a live view of the table or of placed memory with its tag, index or generation changed {:.1}, a constant buffer view so changed {:.1}, \n             a view whose tag, index and generation are as last seen {:.1}, no live view (a tag left over other data) {:.1}",
             s[0],
             s[1],
             s[2],
@@ -784,7 +809,11 @@ pub(crate) fn line(frames: f64) {
             s[10],
             s[11],
             s[12],
-            s[13]
+            s[13],
+            s[14],
+            s[15],
+            s[16],
+            s[17]
         );
     }
     #[cfg(feature = "diagnostics")]
@@ -911,27 +940,27 @@ mod tests {
 
         // Slot 5 is marked: pending (CHECKED[3]) increments, tabled (CHECKED[5]) and missed (CHECKED[1], MISSED_ALL) do not.
         mark(start + 5 * 32);
-        missed(5, start + 5 * 32, true, true, &[0; 32]);
+        missed(5, start + 5 * 32, true, true, &[0; 32], true);
         assert_eq!(CHECKED[3].load(Relaxed), 1);
         assert_eq!(CHECKED[1].load(Relaxed), 0);
         assert_eq!(CHECKED[5].load(Relaxed), 0);
         assert_eq!(MISSED_ALL.load(Relaxed), 0);
 
         // Unmarked tabled view record increments both missed and tabled, plus MISSED_ALL.
-        missed(6, start + 6 * 32, true, true, &[0; 32]);
+        missed(6, start + 6 * 32, true, true, &[0; 32], true);
         assert_eq!(CHECKED[1].load(Relaxed), 1);
         assert_eq!(CHECKED[5].load(Relaxed), 1);
         assert_eq!(MISSED_ALL.load(Relaxed), 1);
 
         // Even after line() resets CHECKED[1], the global warn sequence continues past 20 without resetting.
         for i in 7..28 {
-            missed(i, start + u64::from(i) * 32, true, false, &[0; 32]);
+            missed(i, start + u64::from(i) * 32, true, false, &[0; 32], true);
         }
         CHECKED[1].store(0, Relaxed);
         let n_before = MISSED_ALL.load(Relaxed);
         assert_eq!(n_before, 22);
         assert!(!should_warn_missed(n_before));
-        missed(28, start + 28 * 32, true, false, &[0; 32]);
+        missed(28, start + 28 * 32, true, false, &[0; 32], true);
         assert_eq!(CHECKED[1].load(Relaxed), 1);
         assert_eq!(MISSED_ALL.load(Relaxed), 23);
         assert!(should_warn_missed(32));
@@ -963,7 +992,7 @@ mod tests {
         sort_round_in(&mut s, 10, &[(64, 4)], vec![told_now]);
         let after = SORTED.each_ref().map(|c| c.load(Relaxed));
         let delta: Vec<u64> = after.iter().zip(before).map(|(a, b)| a - b).collect();
-        assert_eq!(delta, [3, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
+        assert_eq!(delta, [3, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0]);
         assert!(s.missed.is_empty());
         assert_eq!(s.frame, 10);
         assert!(s.told.contains(&told_now) && s.told_before.contains(&told_before));

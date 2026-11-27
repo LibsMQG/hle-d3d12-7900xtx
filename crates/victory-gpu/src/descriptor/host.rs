@@ -4879,6 +4879,23 @@ impl Copied<'_> {
         let last = unsafe { std::slice::from_raw_parts_mut(self.at.add(at), end - at) };
         changed_records(last, &records[..end - at], self.step, first, out);
     }
+
+    /// Renderer port #2's diagnostics: the first twelve bytes (tag, index,
+    /// generation) of the records last seen of the `count` slots from `first`,
+    /// zeros past the end.
+    ///
+    /// # Safety
+    /// As [`Copied::changes`]: no other call beside this one has these slots.
+    #[cfg(feature = "diagnostics")]
+    pub(crate) unsafe fn heads(&self, first: u32, count: usize) -> Vec<[u8; 12]> {
+        (0..count)
+            .map(|k| {
+                let at = (first as usize + k) * self.step;
+                // SAFETY: inside the records held, the caller's slots alone.
+                if at + 12 <= self.len { unsafe { self.at.add(at).cast::<[u8; 12]>().read_unaligned() } } else { [0; 12] }
+            })
+            .collect()
+    }
 }
 
 /// The records (`step` bytes each, the first is slot `first`) that differ
