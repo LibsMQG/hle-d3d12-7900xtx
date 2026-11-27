@@ -1286,7 +1286,10 @@ pub(crate) struct HostList {
     twins: Mutex<std::collections::HashMap<usize, TwinUse>>,
     /// The list that runs those transitions just before this one, made
     /// when the list first has such transitions ([`lazy_prelude`]).
-    prelude: OnceLock<Option<Prelude>>,
+    prelude: OnceLock<Option<OwnPrelude>>,
+    /// With [`prelude_pool`], instead: the pooled prelude taken for the
+    /// submission being prepared.
+    pooled: Pooled,
     /// The pipelines the list binds, for reports of slow submissions.
     pipelines: std::sync::Arc<Mutex<std::collections::BTreeSet<String>>>,
     /// What its indirect executions ran, for the report of a removed device.
@@ -1337,6 +1340,110 @@ type Prelude = (ID3D12CommandAllocator, ID3D12GraphicsCommandList);
 fn lazy_prelude() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("VICTORY_LAZY_PRELUDE").is_none_or(|v| v != "0"))
+}
+
+/// `VICTORY_PRELUDE_POOL=1` (off by default): preludes come from a pool
+/// shared by all lists instead of each list keeping one of its own.
+///
+/// An allocator a list was recorded on keeps a command chunk of about 1 MB
+/// of write-combined memory, nearly all of it in RAM, and gives none back on
+/// a reset (`tools/wcprobe`: 760 allocator and list pairs, +810 MB; 760
+/// lists on one allocator, +51 MB). Every host list that ever moved a
+/// texture's state kept a prelude, its own allocator and list (about 1,000
+/// in a free-roam run). A prelude is recorded afresh at each submission and
+/// only that submission needs it: from the pool, it goes back with the fence
+/// value of its submission (sent ahead or waited for) and is taken again
+/// once the card has passed it. Main lists keep their own allocators: a
+/// title may run a list again without recording it.
+pub(crate) fn prelude_pool() -> bool {
+    #[cfg(test)]
+    if PRELUDE_POOL_FORCED.load(Ordering::Relaxed) {
+        return true;
+    }
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VICTORY_PRELUDE_POOL").ok().as_deref().map(str::trim) == Some("1"))
+}
+
+#[cfg(test)]
+pub(crate) static PRELUDE_POOL_FORCED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Preludes: kept by a list, alive now; and with [`prelude_pool`]: made for
+/// the pool, taken from it again, waiting in it now, and left in a list
+/// when it took another (never reused, to be safe).
+pub(crate) static PRELUDES: [std::sync::atomic::AtomicU64; 5] = [const { std::sync::atomic::AtomicU64::new(0) }; 5];
+
+/// A list's own prelude, counted in [`PRELUDES`]`[0]` while it lives.
+struct OwnPrelude(Prelude);
+
+impl OwnPrelude {
+    fn new(p: Prelude) -> Self {
+        PRELUDES[0].fetch_add(1, Ordering::Relaxed);
+        OwnPrelude(p)
+    }
+}
+
+impl Drop for OwnPrelude {
+    fn drop(&mut self) {
+        PRELUDES[0].fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Pooled preludes and the fence value of the submission that last ran
+/// each ([`prelude_pool`]).
+struct PreludePool(Vec<(u64, Prelude)>);
+// SAFETY: D3D12 objects are free-threaded; an allocator and its list are
+// recorded by the submitting thread only, under the submission lock.
+unsafe impl Send for PreludePool {}
+static PRELUDE_POOL: Mutex<PreludePool> = Mutex::new(PreludePool(Vec::new()));
+
+/// A pooled prelude a list took for the submission being prepared; given
+/// back with its fence value once sent ([`give_back_preludes`]). Dropped
+/// with the list before that (a submission that never went out), it is
+/// retired: freed once every submission running then has finished.
+#[derive(Default)]
+struct Pooled(Mutex<Option<Prelude>>);
+
+impl Drop for Pooled {
+    fn drop(&mut self) {
+        if let Some(p) = self.0.get_mut().unwrap_or_else(|e| e.into_inner()).take() {
+            retire(p);
+        }
+    }
+}
+
+/// A prelude from the pool the card has passed (`completed`), or None.
+fn take_pooled(completed: u64) -> Option<Prelude> {
+    let mut pool = PRELUDE_POOL.lock().unwrap_or_else(|e| e.into_inner());
+    let at = pool.0.iter().position(|(fence, _)| completed != u64::MAX && *fence <= completed)?;
+    PRELUDES[3].fetch_sub(1, Ordering::Relaxed);
+    Some(pool.0.swap_remove(at).1)
+}
+
+/// Gives the pooled preludes `lists` took back to the pool, as run by the
+/// submission signalled with `fence`.
+fn give_back_preludes(lists: &[&HostList], fence: u64) {
+    let mut pool = PRELUDE_POOL.lock().unwrap_or_else(|e| e.into_inner());
+    for list in lists {
+        if let Some(p) = list.pooled.0.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            pool.0.push((fence, p));
+            PRELUDES[3].fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// For the memory owners' line: own preludes alive; pool: made, taken
+/// again, waiting, left in a list.
+pub(crate) fn preludes_text() -> String {
+    let c = |i: usize| PRELUDES[i].load(Ordering::Relaxed);
+    format!(
+        "own preludes alive {}; prelude pool (VICTORY_PRELUDE_POOL={}): {} made, {} taken again, {} waiting, {} left in a list",
+        c(0),
+        u8::from(prelude_pool()),
+        c(1),
+        c(2),
+        c(3),
+        c(4)
+    )
 }
 
 /// Timestamps per list (diagnostics); commands past them are not timed.
@@ -4218,8 +4325,8 @@ impl Host {
                 None,
             )?;
             let prelude = OnceLock::new();
-            if !lazy_prelude() {
-                let _ = prelude.set(self.make_prelude());
+            if !lazy_prelude() && !prelude_pool() {
+                let _ = prelude.set(self.make_prelude().map(OwnPrelude::new));
             }
             #[cfg(feature = "diagnostics")]
             let notes = std::sync::Arc::<Mutex<Vec<Note>>>::default();
@@ -4253,6 +4360,7 @@ impl Host {
                 states: Mutex::default(),
                 twins: Mutex::default(),
                 prelude,
+                pooled: Pooled::default(),
                 pipelines,
                 #[cfg(feature = "diagnostics")]
                 indirects,
@@ -5896,6 +6004,9 @@ impl Host {
             #[cfg(feature = "diagnostics")]
             crate::timeline::sent(sending, *submitted, stamp);
             self.card_sent();
+            // Pooled preludes these lists ran: free again once the card has
+            // passed this submission.
+            give_back_preludes(runs, *submitted);
             stage.next("submit: noting what is in the air");
             if let Err(e) = signalled {
                 fail(format_args!("a submission sent ahead could not be followed by a signal ({e})"));
@@ -5989,6 +6100,9 @@ impl Host {
             let _ = (i, started);
         }
         let _ = &firsts;
+        // Waited for: the pooled preludes these lists ran are free again
+        // (the fence value of the last group).
+        give_back_preludes(runs, *submitted);
         FINISHED.store(this_submission, Ordering::Release);
         bury(this_submission);
         let gpu = prepared.elapsed();
@@ -6888,15 +7002,47 @@ impl HostList {
         if barriers.is_empty() && syncs.is_empty() {
             return None;
         }
-        let Some((allocator, list)) = self
-            .prelude
-            .get_or_init(|| host().and_then(|h| h.make_prelude()))
-            .as_ref()
-        else {
-            fail(format_args!("no host list for a state prelude"));
+        let taken: Prelude;
+        let own: &Option<OwnPrelude>;
+        let (allocator, list) = if prelude_pool() {
+            // From the pool, one the card has passed, or a new one; given
+            // back once this submission is sent (`give_back_preludes`).
+            let Some(host) = host() else {
+                fail(format_args!("no host list for a state prelude"));
+            };
+            // SAFETY: a plain query.
+            let completed = unsafe { host.fence.GetCompletedValue() };
+            let p = match take_pooled(completed) {
+                Some(p) => {
+                    PRELUDES[2].fetch_add(1, Ordering::Relaxed);
+                    p
+                }
+                None => {
+                    let Some(p) = host.make_prelude() else {
+                        fail(format_args!("no host list for a state prelude"));
+                    };
+                    PRELUDES[1].fetch_add(1, Ordering::Relaxed);
+                    p
+                }
+            };
+            // One left from a submission that never went out: freed once
+            // every submission running now has finished, never reused.
+            if let Some(old) = self.pooled.0.lock().unwrap_or_else(|e| e.into_inner()).replace(p.clone()) {
+                PRELUDES[4].fetch_add(1, Ordering::Relaxed);
+                retire(old);
+            }
+            taken = p;
+            (&taken.0, &taken.1)
+        } else {
+            own = self.prelude.get_or_init(|| host().and_then(|h| h.make_prelude()).map(OwnPrelude::new));
+            let Some(OwnPrelude((allocator, list))) = own.as_ref() else {
+                fail(format_args!("no host list for a state prelude"));
+            };
+            (allocator, list)
         };
-        // SAFETY: the prelude is not executing (every submission is waited
-        // for); the textures are live.
+        // SAFETY: an own prelude is not executing (the list's last
+        // submission ran before it is recorded again); a pooled one was
+        // taken once the card had passed it; the textures are live.
         let recorded = unsafe {
             allocator.Reset().and_then(|()| {
                 list.Reset(allocator, None)?;
@@ -11366,5 +11512,80 @@ mod mem_owners_tests {
             "on: recorded with its site: {sites:?}"
         );
         assert!(report.contains("host lists alive"), "{report}");
+    }
+}
+
+#[cfg(test)]
+mod prelude_pool_tests {
+    use super::*;
+
+    /// On a host, with `VICTORY_PRELUDE_POOL`: a list whose texture must
+    /// change state at submission gets a prelude from the pool; once the
+    /// submission is sent it is back in the pool, and the next submissions
+    /// take it again instead of making new ones. Switch off, the list keeps
+    /// a prelude of its own, counted alive while the list lives.
+    #[test]
+    fn a_pooled_prelude_comes_back_after_its_submission_and_is_taken_again() {
+        let Some(host) = host() else {
+            return; // no host GPU here
+        };
+        let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, ..Default::default() };
+        let desc = D3D12_RESOURCE_DESC {
+            Dimension: D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+            Width: 16,
+            Height: 16,
+            DepthOrArraySize: 1,
+            MipLevels: 1,
+            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            ..Default::default()
+        };
+        let mut texture: Option<ID3D12Resource> = None;
+        // SAFETY: plain creation.
+        unsafe {
+            host.device
+                .CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, None, &mut texture)
+                .unwrap()
+        };
+        let copy = std::sync::Arc::new(crate::resource::HostTexture::for_test(texture.unwrap(), 0));
+        // Copy destination and copy source in turn: each submission moves it.
+        let states = [0x400u32, 0x800];
+
+        // Off: the list makes its own prelude and it is counted alive.
+        {
+            let own = PRELUDES[0].load(Ordering::Relaxed);
+            let list = host.new_list().unwrap();
+            list.settle(&copy, states[0]);
+            list.close();
+            host.execute(&[&list]);
+            assert!(PRELUDES[0].load(Ordering::Relaxed) > own || prelude_pool(), "an own prelude made");
+        }
+
+        PRELUDE_POOL_FORCED.store(true, Ordering::Relaxed);
+        let (made, taken) = (PRELUDES[1].load(Ordering::Relaxed), PRELUDES[2].load(Ordering::Relaxed));
+        let mut lists = Vec::new();
+        for round in 1..=4 {
+            let list = host.new_list().unwrap();
+            list.settle(&copy, states[round % 2]);
+            list.close();
+            host.execute(&[&list]);
+            assert!(
+                list.pooled.0.lock().unwrap().is_none(),
+                "round {round}: the pooled prelude went back once the submission was sent"
+            );
+            assert!(list.prelude.get().is_none(), "round {round}: no prelude of its own");
+            // Kept alive: a list that held its prelude would keep it.
+            lists.push(list);
+        }
+        let made = PRELUDES[1].load(Ordering::Relaxed) - made;
+        let taken = PRELUDES[2].load(Ordering::Relaxed) - taken;
+        assert!(made + taken >= 4, "every submission had a prelude: {made} made, {taken} taken");
+        assert!(taken >= 3, "after the first, taken from the pool again: {taken} of 4 ({made} made)");
+        assert_eq!(
+            copy.state.load(Ordering::Relaxed),
+            states[0],
+            "the texture's real state is the last list's"
+        );
+        PRELUDE_POOL_FORCED.store(false, Ordering::Relaxed);
     }
 }

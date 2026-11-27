@@ -230,7 +230,7 @@ pub(crate) fn report() -> String {
     let preludes = crate::host::LISTS[1].load(std::sync::atomic::Ordering::Relaxed);
     let text = format!(
         "write-combined: {} blocks, {:.2} GB committed (walk {:.0} ms); by size: {}; of {} blocks of 32 MB, {} hold an upload \
-         buffer of ours ({}); host lists alive {lists_alive} (made {lists_made}, preludes {preludes})",
+         buffer of ours ({}); host lists alive {lists_alive} (made {lists_made}, preludes {preludes}); {}",
         blocks.len(),
         mb(total) / 1024.0,
         took.as_secs_f64() * 1e3,
@@ -238,6 +238,7 @@ pub(crate) fn report() -> String {
         big.len(),
         ours,
         if sites_text.is_empty() { "none".into() } else { sites_text.join("; ") },
+        crate::host::preludes_text(),
     );
     tracing::info!("VICTORY_MEM_OWNERS: {text}");
     say_private();

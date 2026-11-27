@@ -2710,6 +2710,12 @@ impl HostTexture {
         self.flags
     }
 
+    /// Tests: a host copy of `texture`, in `state`, with no title resource.
+    #[cfg(test)]
+    pub(crate) fn for_test(texture: windows::Win32::Graphics::Direct3D12::ID3D12Resource, state: u32) -> HostTexture {
+        HostTexture::new(texture, state)
+    }
+
     fn new(texture: windows::Win32::Graphics::Direct3D12::ID3D12Resource, state: u32) -> HostTexture {
         use std::sync::atomic::Ordering::Relaxed;
         let bytes = host_bytes(&texture);
