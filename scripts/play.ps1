@@ -81,6 +81,14 @@ if ($Tuned) {
     # views, which no write of the CPU to the heap's addresses makes (a writer
     # trace caught only the six stores). No picture defect standing or walking.
     $settings.VICTORY_PORT_DESCRIPTORS = '1'
+    # The views of the title's batch page-mapping copies (its GPU view of the streaming pool,
+    # which its CPU does not touch) kept in our books and mapped only when touched, in place of
+    # a map and an unmap call a page under the address-space lock. Two drives from the same save
+    # (one exe, off and on): remapping 316 -> 118 ms a second (median), frames p90 177 -> 141 ms
+    # and p99 457 -> 271 ms, time in frames of 250 ms or more 13.3 -> 5.4%, the median the same,
+    # with more draws and less free RAM in the second; about 2,100 calls a second spared, three
+    # views made real in the whole drive; no picture defect from it.
+    $settings.VICTORY_SOFT_VIEWS = 'copies'
     # Host memory: preludes come from one pool shared by all lists, handed back
     # when their submission's fence is passed, in place of one command allocator
     # (about 1.5 MB, never given back) for each list. Jail, standing, two pairs

@@ -79,14 +79,15 @@ Every commit taken from elsewhere keeps its author and, where it was a cherry-pi
 | [YukiRyuu/RYUKI-7900XT](https://github.com/YukiRyuu/RYUKI-7900XT) | 7900 XT/XTX fork with 32 GB work and many community forks merged | **The base tree** (the root commit). Chosen because it was already faster than our first line, so our work was ported onto it piece by piece. |
 | [avatarmanz/VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX) | 7900 XTX fork that carries the upstream renderer patches | **Renderer ports 1, 5, 6, 7** and the halving search for ranges asked ahead. Aim: the submitting thread, which is what limits the frame. Ports 1 and 5 are on in `play.ps1 -Tuned`; 6 and 7 stay off (measured: no gain or worse). |
 | [polackangry/POLSKAGUROM](https://github.com/polackangry/POLSKAGUROM) | NVIDIA-oriented fork on the upstream line | **Renderer port 2** (`VICTORY_PORT_DESCRIPTORS`): the title's descriptor-record stores report their slots instead of the whole view heap being scanned. Submitting thread -4 ms, heap rounds 28 -> 19 ms. On in `-Tuned`. |
-| [XaviFortes/VIctory-RDNA](https://github.com/XaviFortes/VIctory-RDNA) | RX 7900 XT fork focused on the submitting thread | AVX2 compare in `Shadow::take`, a lock-free "anything pending?" flag with a `RwLock`, 4 MiB journal pieces, `VICTORY_PORT_BUFFERS` (title buffers above 4 GiB in place, big ones kept in VRAM). Together about -5 ms a frame. Its unconditional in-place card-step changes were left out (no effect here, correctness risk). |
+| [XaviFortes/VIctory-RDNA](https://github.com/XaviFortes/VIctory-RDNA) | RX 7900 XT fork focused on the submitting thread | AVX2 compare in `Shadow::take`, a lock-free "anything pending?" flag with a `RwLock`, 4 MiB journal pieces, `VICTORY_PORT_BUFFERS` (title buffers above 4 GiB in place, big ones kept in VRAM). Together about -5 ms a frame. Later `VICTORY_UNGUARD_RUNS` (guarded blocks given back with one protection change a run; on): in two drives its phases 2-4% below their neighbours, inside the noise. Its unconditional in-place card-step changes and the per-part buffer spans were left out (no effect here or twice the cost; correctness risk). |
+| Op-lite's fork | Community fork with memory hooks and work on freezes | **`VICTORY_SOFT_VIEWS=copies`** (ported by hand): the views the title's batch page-mapping copies make at its GPU view are kept in our books and mapped only when something touches them, in place of a map and an unmap call a page. In two drives the remapping fell from 316 to 118 ms a second and the slow frames by half (p99 457 -> 271 ms). On in `-Tuned`. Its hooks that patch the title's memory calls were left out (stale textures by its own account, or retired). |
 | [zeex64/victory-7900xtx](https://github.com/zeex64/victory-7900xtx) | Fork on the upstream line, run under Linux/Proton | **`VICTORY_SYNC_IN_PLACE`** (ported, adapted to port 2's parts): the heaps' descriptor records read where they are and compared with AVX2 as read, in place of a copy of each changed page first. Reading and comparing 4.6 -> 3.3 ms a frame, the submitting thread's wait for it -0.4 ms. On in `-Tuned`. Its other speed switches were already here (`VICTORY_SLOT_BITS`) or turned off by its own measurements; its Linux and Wine work does not apply. |
 | [WillyboPeep/victory-all-forks](https://github.com/WillyboPeep/victory-all-forks) | A merge of many community forks | **Correctness fixes**, not speed: use-after-free in audio, queues and fences; save-data validation; loader, GPU, shader-recompiler and DirectStorage fixes; frame-wait ticks; Bink skip. Full list under [Fixes taken from others](#fixes-taken-from-others). |
 | [VIctory](https://github.com/Marvisak/VIctory) | The upstream project | Through all of the above. One idea re-written by us: a submission's one asking holds every range over both its parts (after upstream `e000e02`). |
 
 Forks that were read and checked but gave **nothing** taken here (already present, no gain on
 this GPU, or a different architecture): Belobug/VIctory-Belobug-AMD, fxceless/victory-fork,
-JoshuuDev/victory-amd, DexNom, rorodev6's forks, Op-lite's fork,
+JoshuuDev/victory-amd, DexNom, rorodev6's forks,
 Paradoxo321/rodrion-vi, LooperSalty's fork and others.
 
 ### Fixes taken from others
@@ -164,9 +165,10 @@ the card, one after the other), not by RAM or VRAM traffic; port 2's real misses
   then makes the same pipelines through the stream method (measured), so no draw is lost. The 203
   shaders the recompiler cannot translate (geometry shaders of one voxelization pass, three text
   programs, five shadow tracers) are in no pipeline the title draws or dispatches with.
-- Moving fast through new areas: pipelines are compiled when first met (`victory warm --used`
-  builds them ahead), and with 32 GB of RAM free memory falls to 1-2 GB, so the title's memory
-  remapping costs 100-200 ms a second.
+- Moving fast through new areas (driving): pipelines are compiled when first met (`victory warm
+  --used` builds them ahead), and with 32 GB of RAM free memory falls to 1-2 GB. The title's
+  memory remapping was 300-850 ms a second; with `VICTORY_SOFT_VIEWS=copies` (on in `-Tuned`)
+  about 120, nearly all of it the title's own mapping calls, and driving runs at about 9 fps.
 - After any change to the shader recompiler the first start rebuilds the pipeline cache: several
   minutes with missing textures before the picture is complete.
 
@@ -198,7 +200,8 @@ authors.
 - **[polackangry/POLSKAGUROM](https://github.com/polackangry/POLSKAGUROM)** by polackangry and
   Muhammad Salman Barkat, for renderer port 2.
 - **[XaviFortes/VIctory-RDNA](https://github.com/XaviFortes/VIctory-RDNA)** by XaviFortes, for the
-  submit-thread changes and `VICTORY_PORT_BUFFERS`.
+  submit-thread changes, `VICTORY_PORT_BUFFERS` and `VICTORY_UNGUARD_RUNS`.
+- **Op-lite's fork** by Op-lite, for `VICTORY_SOFT_VIEWS`.
 - **[VIctory](https://github.com/Marvisak/VIctory)** by Marvisak and its contributors.
 - **[WillyboPeep/victory-all-forks](https://github.com/WillyboPeep/victory-all-forks)**, a merge of
   community forks, where the fixes taken here were found, by AscilCH, C-GDev, David, DocBlack89,
