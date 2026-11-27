@@ -112,6 +112,8 @@ mod upload;
 mod watch;
 #[cfg(windows)]
 mod texback;
+#[cfg(windows)]
+mod wcskip; // VICTORY_SKIP_WC_BACK=1 (off), VICTORY_SKIP_WC_MIN_KB=1024
 // (Fox port C2) F11 texture detail meter (VICTORY_TEXTURE_DETAIL, off by default).
 #[cfg(all(windows, feature = "diagnostics"))]
 mod texdetail;
@@ -134,14 +136,13 @@ pub fn frame_phase() -> u32 {
 #[cfg(all(windows, feature = "diagnostics"))]
 mod changed;
 /// The title reserved `[at, at + size)` asking for protection `protect`,
-/// the console's bits included: kept by diagnostics builds only
-/// (`VICTORY_CHANGED_BYTES`).
+/// the console's bits included: for `VICTORY_SKIP_WC_BACK` (`wcskip`), and in
+/// diagnostics builds for `VICTORY_CHANGED_BYTES`.
 #[cfg(windows)]
 pub fn title_memory_reserved(at: usize, size: usize, protect: u32) {
+    wcskip::reserved(at, size, protect);
     #[cfg(feature = "diagnostics")]
     changed::reserved(at, size, protect);
-    #[cfg(not(feature = "diagnostics"))]
-    let _ = (at, size, protect);
 }
 #[cfg(windows)]
 pub use inplace::{title_memory_freeing, title_memory_section, title_memory_section_gone, title_memory_view};
