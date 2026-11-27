@@ -124,6 +124,16 @@ if ($Tuned) {
     # them in 6 of 7). Measured before ports 1, 2 and 5 were on it was worse
     # (protection changes 7 -> 16 ms).
     $settings.VICTORY_PORT_GUARD = '1'
+    # What shaders write to write-combined title memory (the title's CPU writes
+    # it and does not read it back), in buffers of 1 MiB and more, is not
+    # fetched back from the card (port from fxceless #868 + #1268 via
+    # PastiiJay/klbf-lab). In-run A/B (jail, standing, 7 pairs of 20 s
+    # phases): median frame 69.2 -> 51.9 ms, -17.0 ms, lower in every pair
+    # (the heap's pass -6.9 ms, compares -1.25); moving, lower in the 2 pairs
+    # with alike draws. A 5-minute walk and drive with it on throughout: no
+    # picture defect, memory as in other drives. (Measured on main 44718da0,
+    # before ports 6 and SOFT_VIEWS were on in this preset.)
+    $settings.VICTORY_SKIP_WC_BACK = '1'
 }
 foreach ($k in $More.Keys) { $settings[$k] = $More[$k] }
 
