@@ -19,8 +19,12 @@ heaps' records 6.6 -> 2.4 ms a frame, its work 41.4 -> 38.4 ms, frames 49.1 ->
 46.1 ms median (-6.2 %; ON below its OFF neighbours in 8 of 9 pairs, one
 even), p90 55.3 -> 53.5 ms; the long frames of the 35/65 ms turns 64.5 ->
 59.9 ms; no picture defect. The same A/B with four translators was neutral:
-the submitting thread then stood at lists still being translated. Driving not
-measured.
+the submitting thread then stood at lists still being translated. One drive
+with the same in-run A/B (standing, then on foot and in the car): no error and
+no new picture defect; over the run the wait for the heaps' records 5.9 -> 3.0
+ms a frame and the submitting thread's work 65.9 -> 62.3 ms; the driving
+phases' frames within the drive's noise (ON against its OFF neighbours: median
++1.2 %, mean -0.8 % over 7 phases of 4,000 to 11,600 draws).
 
 ## Caches made ahead by `play.ps1 -Warm` (2026-11-27)
 

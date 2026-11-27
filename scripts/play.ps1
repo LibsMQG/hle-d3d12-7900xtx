@@ -197,7 +197,8 @@ if ($Tuned) {
     # 46.1 ms median (-6.2 %; ON below its OFF neighbours in 8 of 9 pairs,
     # one even), p90 55.3 -> 53.5 ms; no picture defect. With four
     # translators it was neutral: the submitting thread then stood at lists
-    # still being translated, not at the records. Driving not measured.
+    # still being translated, not at the records. One drive with the same
+    # A/B: the wait 5.9 -> 3.0 ms, frames within the drive's noise, no error.
     $settings.VICTORY_PORT_JOURNAL = '1'
     # What shaders write to write-combined title memory (the title's CPU writes
     # it and does not read it back), in buffers of 1 MiB and more, is not
