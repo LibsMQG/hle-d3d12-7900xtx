@@ -1935,6 +1935,9 @@ mod tests {
             MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
         };
         const MEM_WRITE_WATCH: u32 = 0x20_0000;
+        // Write-watched memory, asked through the journal: one at a time with
+        // the tests of `watch.rs`, as they are with one another.
+        let _serial = crate::watch::serial_test();
         let memory = unsafe {
             VirtualAlloc(
                 std::ptr::null(),
@@ -1961,6 +1964,10 @@ mod tests {
             let source = elsewhere.as_mut_ptr() as u64;
             let sampler = [21, 3, 3, 3, 0, 1, 0, 0, 0, 0, 0, 0x7f7f_ffff, 0];
             create_sampler(std::ptr::null(), &sampler, source);
+            // Other tests' submissions sync every heap, this one too
+            // (`begin_sync_heaps`): the heaps' list, held alone, keeps them
+            // out while the bytes are copied and the slot is looked at.
+            let alone = SHADER_HEAPS.write().unwrap_or_else(|e| e.into_inner());
             // SAFETY: the heap slot and source both hold 16 descriptor bytes.
             unsafe {
                 std::ptr::copy_nonoverlapping(
@@ -1970,7 +1977,11 @@ mod tests {
                 )
             };
             assert!(!host.made(5));
+            drop(alone);
             sync_heaps();
+            // One of their syncs may have taken the page first; it holds the
+            // list until it has made the record.
+            drop(SHADER_HEAPS.write().unwrap_or_else(|e| e.into_inner()));
             assert!(host.made(5));
         }
         slot::<extern "system" fn(This) -> u32>(h, 0x10)(h);
