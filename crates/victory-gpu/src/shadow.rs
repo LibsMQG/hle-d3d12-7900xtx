@@ -501,10 +501,12 @@ fn window_card_for(size: u64) -> Option<ID3D12Resource> {
 /// only writes them, as no shader is declared to write a window; if one were,
 /// its snapshot and compare would read through the bus, right but slow. In a
 /// captured frame the lists take 26 ms of the card instead of 29, the frame 32
-/// instead of 36; filling them costs the CPU what it did.
+/// instead of 36; filling them costs the CPU what it did. Each window there is
+/// that much less of the PC's memory held for the card: the windows are the
+/// largest part of it (4.4-4.9 GB of resident shared buffers while driving).
 ///
-/// Windows go there while a fifth of the card's budget is free, as with
-/// [`window_room_for`], which this comes before.
+/// At most [`window_mapped_cap`] of them; they come before
+/// [`window_room_for`].
 fn window_mapped_most() -> u64 {
     static MOST: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *MOST.get_or_init(|| {
@@ -512,8 +514,56 @@ fn window_mapped_most() -> u64 {
     })
 }
 
+/// The share of the card's budget windows in card memory may take, in
+/// percent (`VICTORY_WINDOWS_BAR_PCT`; 20, the default; 1 to 50).
+fn window_mapped_pct() -> u64 {
+    static PCT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *PCT.get_or_init(|| {
+        std::env::var("VICTORY_WINDOWS_BAR_PCT")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(20)
+            .clamp(1, 50)
+    })
+}
+
+/// The most bytes of windows in card memory now, on a card with `budget`
+/// bytes: [`window_mapped_most`], no more than [`window_mapped_pct`] of the
+/// budget, and none under a budget of 10 GiB, where the texture copies need
+/// the room more. Measured on a 24 GB card only.
+fn window_mapped_cap(budget: u64) -> u64 {
+    let most = window_mapped_most();
+    if most == 0 || budget < 10 << 30 {
+        return 0;
+    }
+    most.min(budget / 100 * window_mapped_pct())
+}
+
+/// Whether new windows go to card memory now ([`window_mapped_most`]).
+/// Diagnostics: with `VICTORY_AB=<s>,VICTORY_WINDOWS_BAR_MB`, only in the
+/// phases that have it on, so that one run compares the PC's free memory and
+/// the frames of both sides; a window stays where it was made until it is let
+/// go.
+fn windows_mapped_now() -> bool {
+    if window_mapped_most() == 0 {
+        return false;
+    }
+    #[cfg(all(windows, feature = "diagnostics"))]
+    {
+        static BIT: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+        if let Some(bit) = *BIT.get_or_init(|| crate::ab::bit("VICTORY_WINDOWS_BAR_MB")) {
+            return crate::ab::on(bit);
+        }
+    }
+    true
+}
+
 /// Bytes alive of windows in card memory the CPU maps.
 static WINDOW_MAPPED_BYTES: AtomicU64 = AtomicU64::new(0);
+
+/// Bytes of windows outside buffers alive at the last count
+/// ([`windows_alive`], with every housekeeping line).
+static WINDOWS_ALIVE_BYTES: AtomicU64 = AtomicU64::new(0);
 
 /// For the housekeeping line: bytes alive of windows in card memory the CPU
 /// maps ([`window_mapped_most`]).
@@ -522,34 +572,37 @@ pub(crate) fn windows_on_card() -> u64 {
     WINDOW_MAPPED_BYTES.load(Ordering::Relaxed)
 }
 
-/// A buffer for a window of `size` bytes in card memory the CPU maps, if it is
-/// to be there ([`window_mapped_most`]).
-fn window_mapped_for(size: u64) -> Option<(ID3D12Resource, *mut u8)> {
-    let most = window_mapped_most();
-    if most == 0 {
-        return None;
+/// For the room rule (`crate::resource::let_go_idle`): the bytes of windows
+/// that would lie in card memory if there were room, up to
+/// [`window_mapped_cap`] (those alive at the last count less those there
+/// now). The rule counts them as in use, so it lets the longest idle texture
+/// copies go to make that room: copies idle the longest are seldom made again
+/// (66 MB of 4.85 GB in run winbar-ab1), and windows are used every frame.
+#[cfg(windows)]
+pub(crate) fn windows_wanting_card(budget: u64) -> u64 {
+    if !windows_mapped_now() {
+        return 0;
     }
-    // Diagnostics: with `VICTORY_AB=<s>,VICTORY_WINDOWS_BAR_MB`, new windows
-    // go to the card only in the phases that have it on (at most
-    // `VICTORY_WINDOWS_BAR_MB` of them, as without), so that one run compares
-    // the PC's free memory and the frames of both sides. A window stays where
-    // it was made until it is let go.
-    #[cfg(all(windows, feature = "diagnostics"))]
-    {
-        static BIT: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
-        if let Some(bit) = *BIT.get_or_init(|| crate::ab::bit("VICTORY_WINDOWS_BAR_MB"))
-            && !crate::ab::on(bit)
-        {
-            return None;
-        }
+    let on = WINDOW_MAPPED_BYTES.load(Ordering::Relaxed);
+    window_mapped_cap(budget).min(WINDOWS_ALIVE_BYTES.load(Ordering::Relaxed)).saturating_sub(on)
+}
+
+/// A buffer for a window of `size` bytes in card memory the CPU maps, if it is
+/// to be there ([`windows_mapped_now`], [`window_mapped_cap`]) and the card
+/// has room: under 92 % of its budget, above the 88 % the room rule keeps the
+/// rest under together with [`windows_wanting_card`], so the room the rule
+/// makes for windows is theirs.
+fn window_mapped_for(size: u64) -> Option<(ID3D12Resource, *mut u8)> {
+    if !windows_mapped_now() {
+        return None;
     }
     let host = host()?;
-    if let Some([budget, used, ..]) = host.video_memory()
-        && used + size > budget / 10 * 8
-    {
+    let [budget, used, ..] = host.video_memory()?;
+    let cap = window_mapped_cap(budget);
+    if cap == 0 || used + size > budget / 100 * 92 {
         return None;
     }
-    if WINDOW_MAPPED_BYTES.fetch_add(size, Ordering::Relaxed) + size > most {
+    if WINDOW_MAPPED_BYTES.fetch_add(size, Ordering::Relaxed) + size > cap {
         WINDOW_MAPPED_BYTES.fetch_sub(size, Ordering::Relaxed);
         return None;
     }
@@ -2898,6 +2951,7 @@ pub(crate) fn windows_alive() -> [u64; 2] {
     let loose = LOOSE.read().unwrap_or_else(|e| e.into_inner());
     let mut seen = std::collections::HashSet::new();
     let bytes: u64 = loose.values().filter(|s| seen.insert(Arc::as_ptr(s) as usize)).map(|s| s.len).sum();
+    WINDOWS_ALIVE_BYTES.store(bytes, Ordering::Relaxed);
     [seen.len() as u64, bytes]
 }
 

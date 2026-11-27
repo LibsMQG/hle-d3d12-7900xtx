@@ -2050,9 +2050,13 @@ pub(crate) fn let_go_idle() {
     let (idle_ms, most) = match memory {
         Some([budget, used, ..]) if keep => {
             let raw = used;
+            // The windows that would lie in card memory if there were room
+            // (`VICTORY_WINDOWS_BAR_MB`) count as in use: the room rule lets
+            // the longest idle copies go to make it.
             let used = used.saturating_sub(crate::pool::texture_room())
                 + crate::shadow::card_room_kept()
-                + targets_room_kept();
+                + targets_room_kept()
+                + crate::shadow::windows_wanting_card(budget);
             let (idle_ms, most) = crate::host::vram_keep(budget, used);
             if most == u64::MAX { raw_guard(budget, raw).unwrap_or((idle_ms, most)) } else { (idle_ms, most) }
         }
@@ -2542,7 +2546,7 @@ pub(crate) fn housekeeping() {
     let blocks = crate::pool::texture_blocks();
     tracing::info!(
         "memory housekeeping: card {} MB in use ({} MB counting free heap space) of {} MB (high {} MB, low {} MB); texture copies alive {} MB, \
-         let go for room {} MB ({} MB in the last 5 s), made again {} MB ({} MB in the last 5 s); windows {} alive {} MB ({} MB on the card, VICTORY_WINDOWS_BAR_MB), let go {} MB; \
+         let go for room {} MB ({} MB in the last 5 s), made again {} MB ({} MB in the last 5 s); windows {} alive {} MB ({} MB on the card, {} MB more wanted there, VICTORY_WINDOWS_BAR_MB), let go {} MB; \
          free RAM {} MB; let go on a real unmap {} ({} MB), held at a sweep {} times, mapped again {} (VICTORY_UNMAP_EXACT={}); \
          title memory really unmapped {} MB in {} calls; out-of-memory fallback ran 0 times (none in this base; host memory \
          pressure {}); windows let go on unmap {} ({} MB) (VICTORY_WINDOW_UNMAP={}); host lists idle {}, let go as idle {}          (VICTORY_LIST_POOL_IDLE_S); \
@@ -2562,6 +2566,7 @@ pub(crate) fn housekeeping() {
         windows,
         mb(window_bytes),
         mb(crate::shadow::windows_on_card()),
+        mb(crate::shadow::windows_wanting_card(budget)),
         mb(windows_gone_bytes),
         free_ram,
         exact[0],
