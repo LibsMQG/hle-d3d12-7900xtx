@@ -1319,8 +1319,10 @@ mod tests {
     /// pipeline library and culls or passes fragments according to
     /// `OMSetDepthBounds` (including across a command-list cut), with the
     /// depth test on (`ALWAYS`, no writes: only depth bounds decides) and off.
-    /// The software adapter (WARP, the CI machine's only device) draws outside
-    /// the bounds with the depth test off, so that case runs on hardware only.
+    /// The CI machine's device (no card: a software renderer) draws outside
+    /// the bounds with the depth test off, and its adapter's flags did not
+    /// tell it apart as software there, so that case runs only on a card
+    /// known by its vendor.
     #[test]
     fn depth_bounds_pipeline_loads_and_filters_draws() {
         let Some(host) = host() else {
@@ -1335,15 +1337,16 @@ mod tests {
             return;
         };
         depth_bounds_draws(host, &dxc, true);
-        if software_adapter(host) {
-            eprintln!("software adapter: depth bounds with the depth test off not checked");
-        } else {
+        if known_card(host) {
             depth_bounds_draws(host, &dxc, false);
+        } else {
+            eprintln!("no AMD, NVIDIA or Intel card: depth bounds with the depth test off not checked");
         }
     }
 
-    /// Whether the host device is on a software adapter (WARP).
-    fn software_adapter(host: &crate::host::Host) -> bool {
+    /// Whether the host device is on an AMD, NVIDIA or Intel card; false
+    /// when its adapter cannot be looked up.
+    fn known_card(host: &crate::host::Host) -> bool {
         use windows::Win32::Graphics::Dxgi::{
             CreateDXGIFactory2, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_CREATE_FACTORY_FLAGS, IDXGIAdapter1, IDXGIFactory4,
         };
@@ -1352,7 +1355,9 @@ mod tests {
             CreateDXGIFactory2::<IDXGIFactory4>(DXGI_CREATE_FACTORY_FLAGS(0))
                 .and_then(|f| f.EnumAdapterByLuid::<IDXGIAdapter1>(host.device.GetAdapterLuid()))
                 .and_then(|a| a.GetDesc1())
-                .is_ok_and(|d| d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0)
+                .is_ok_and(|d| {
+                    matches!(d.VendorId, 0x1002 | 0x10de | 0x8086) && d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0
+                })
         }
     }
 
