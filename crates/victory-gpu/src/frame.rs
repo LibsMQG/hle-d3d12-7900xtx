@@ -8,10 +8,19 @@
 //!
 //! shortcut: event offsets are ignored (every event is at the tick); tie
 //! the clock to presentation if a title paces by them.
+//!
+//! `VICTORY_FPS=N` (a test switch, off by default): light frames, those after
+//! 8 frames in a row of at most `VICTORY_FPS_DRAWS` draws each (100; `all`:
+//! every frame), such as the title's videos and loading screens, are only
+//! held to at least 1/N s each, with no rounding to the title's ticks (a
+//! frame of 20 ms shows at 50 a second, not 30); `VICTORY_FPS=0` does not
+//! hold them. The first frame with more draws is back on the title's
+//! interval, and the world's frames stay there. A title that steps what it
+//! shows by the interval it set runs that much faster in light frames.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::object::{HRESULT, S_FALSE, S_OK, This};
@@ -37,6 +46,148 @@ static FRAME: AtomicU64 = AtomicU64::new(0);
 
 fn clock() -> std::sync::MutexGuard<'static, Option<Clock>> {
     CLOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// `VICTORY_FPS`: our pacing of light frames in place of the title's.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Rate {
+    /// Unset: the title's interval for every frame.
+    Title,
+    /// Frames after one of at most `draws` draws are held to at least
+    /// `least` each (zero: not held); the others keep the title's interval.
+    Light { least: Duration, draws: u32 },
+}
+
+/// Light frames: those after a frame of at most this many draws (the
+/// title's videos and loading screens drew 3 to 19 a frame, its world and
+/// the menus over it thousands).
+const LIGHT_DRAWS: u32 = 100;
+
+fn rate_from(fps: Option<&str>, draws: Option<&str>) -> Rate {
+    let least = match fps.map(str::trim).map(str::parse::<u32>) {
+        Some(Ok(0)) => Duration::ZERO,
+        Some(Ok(n)) => Duration::from_nanos(1_000_000_000 / u64::from(n)),
+        _ => return Rate::Title,
+    };
+    let draws = match draws.map(str::trim) {
+        Some("all") => u32::MAX,
+        Some(d) => d.parse().unwrap_or(LIGHT_DRAWS),
+        None => LIGHT_DRAWS,
+    };
+    Rate::Light { least, draws }
+}
+
+fn rate() -> Rate {
+    static RATE: OnceLock<Rate> = OnceLock::new();
+    *RATE.get_or_init(|| {
+        let var = |name: &str| std::env::var(name).ok();
+        let rate = rate_from(
+            var("VICTORY_FPS").as_deref(),
+            var("VICTORY_FPS_DRAWS").as_deref(),
+        );
+        if rate != Rate::Title {
+            tracing::warn!(
+                ?rate,
+                "VICTORY_FPS: light frames are not paced by the title's interval"
+            );
+        }
+        rate
+    })
+}
+
+/// Light frames in a row before ours begin: one frame of few draws amid
+/// the world's (a cut to black) keeps the title's ticks. The first frame
+/// with more draws ends them.
+const LIGHT_AFTER: u32 = 8;
+
+/// Light frames in a row so far.
+static LIGHT_RUN: AtomicU32 = AtomicU32::new(0);
+
+fn next_run(run: u32, draws: u32, most: u32) -> u32 {
+    if draws <= most {
+        run.saturating_add(1)
+    } else {
+        0
+    }
+}
+
+/// A frame began; the one before drew `draws`.
+fn count_light(draws: u32) {
+    if let Rate::Light { draws: most, .. } = rate() {
+        let run = next_run(LIGHT_RUN.load(Ordering::Relaxed), draws, most);
+        LIGHT_RUN.store(run, Ordering::Relaxed);
+    }
+}
+
+/// For a light frame (the last `LIGHT_AFTER` frames drew at most the
+/// switch's draws each), the least time its waits hold it to; `None`: the
+/// title's ticks.
+fn light() -> Option<Duration> {
+    match rate() {
+        Rate::Title => None,
+        Rate::Light { least, .. } => {
+            (LIGHT_RUN.load(Ordering::Relaxed) >= LIGHT_AFTER).then_some(least)
+        }
+    }
+}
+
+/// Whether the last frame wait was a light frame's.
+static WAS_LIGHT: AtomicBool = AtomicBool::new(false);
+/// Changes between light frames and the title's ticks.
+static SWITCHES: AtomicU64 = AtomicU64::new(0);
+
+/// Light frames begin or end (logged, the first 200 times). Light waits take
+/// no ticks, so back on the title's the first wait ends at once on the tick
+/// that passed, as after any long frame.
+fn switched(light: bool) {
+    if SWITCHES.fetch_add(1, Ordering::Relaxed) < 200 {
+        let draws = PRESENTED_DRAWS.load(Ordering::Relaxed);
+        let to = if light {
+            "light frames, ours"
+        } else {
+            "the title's interval"
+        };
+        tracing::info!(draws, frame = current(), "VICTORY_FPS: {to}");
+    }
+}
+
+/// Per event kind: when the last light wait for it ended (nanoseconds from
+/// the first one; 0: none yet).
+static LIGHT_END: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+
+fn light_now() -> u64 {
+    static BASE: OnceLock<Instant> = OnceLock::new();
+    (BASE.get_or_init(Instant::now).elapsed().as_nanos() as u64).max(1)
+}
+
+/// A light frame's wait: it ends `least` after the last one for `kind`
+/// ended (at once if that has passed), or at the time-out first. Two waits
+/// for one kind do not end on one turn: a loser waits its `least` again.
+fn light_wait(kind: u32, least: Duration, limit: Duration, slept: &mut Duration) -> HRESULT {
+    let end = &LIGHT_END[(kind as usize).min(LIGHT_END.len() - 1)];
+    let least = least.as_nanos() as u64;
+    loop {
+        let before = end.load(Ordering::Relaxed);
+        let now = light_now();
+        let due = if before == 0 { now } else { before + least };
+        let wait = Duration::from_nanos(due.saturating_sub(now));
+        let left = limit.saturating_sub(*slept);
+        if wait > left {
+            std::thread::sleep(left);
+            *slept += left;
+            return TIMEOUT;
+        }
+        if !wait.is_zero() {
+            std::thread::sleep(wait);
+            *slept += wait;
+        }
+        if end
+            .compare_exchange(before, light_now(), Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return S_OK;
+        }
+    }
 }
 
 /// Device method: a frame every `length` microseconds. The period is how
@@ -149,23 +300,31 @@ pub(crate) extern "system" fn wait(
         wait = Duration::ZERO;
     }
     let _called = crate::timeline::span("the title's frame wait");
-    // The tick is this waiter's only when it advanced `last`: two waits
-    // that wake together otherwise both end on it. A loser waits again on
-    // the next tick, until its deadline (measured from the call, so a
-    // sleep that woke late does not stretch it).
     let mut slept = Duration::ZERO;
-    let hr = loop {
-        if wait > limit.saturating_sub(slept) {
-            std::thread::sleep(limit.saturating_sub(slept));
-            break TIMEOUT;
+    let light = light();
+    if WAS_LIGHT.swap(light.is_some(), Ordering::Relaxed) != light.is_some() {
+        switched(light.is_some());
+    }
+    let hr = if let Some(least) = light {
+        light_wait(kind, least, limit, &mut slept)
+    } else {
+        // The tick is this waiter's only when it advanced `last`: two waits
+        // that wake together otherwise both end on it. A loser waits again
+        // on the next tick, until its deadline (measured from the call, so a
+        // sleep that woke late does not stretch it).
+        loop {
+            if wait > limit.saturating_sub(slept) {
+                std::thread::sleep(limit.saturating_sub(slept));
+                break TIMEOUT;
+            }
+            std::thread::sleep(wait);
+            slept += wait;
+            if last(kind).fetch_max(tick, Ordering::Relaxed) < tick {
+                break S_OK;
+            }
+            let (next, until) = next_tick(kind);
+            (tick, wait) = (next, until);
         }
-        std::thread::sleep(wait);
-        slept += wait;
-        if last(kind).fetch_max(tick, Ordering::Relaxed) < tick {
-            break S_OK;
-        }
-        let (next, until) = next_tick(kind);
-        (tick, wait) = (next, until);
     };
     #[cfg(all(windows, feature = "diagnostics"))]
     {
@@ -224,6 +383,7 @@ fn frame_began() {
         let before = DRAWN_AT_FRAME.swap(drawn, Ordering::Relaxed);
         let draws = drawn.saturating_sub(before).min(u64::from(u32::MAX)) as u32;
         PRESENTED_DRAWS.store(draws, Ordering::Relaxed);
+        count_light(draws);
         crate::framelog::frame();
         crate::hangwatch::start();
     }
@@ -247,6 +407,72 @@ pub(crate) extern "system" fn statistics(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fps_switch_values() {
+        assert_eq!(rate_from(None, None), Rate::Title);
+        assert_eq!(rate_from(Some(""), Some("all")), Rate::Title);
+        assert_eq!(rate_from(Some("fast"), None), Rate::Title);
+        let light = |least, draws| Rate::Light { least, draws };
+        assert_eq!(
+            rate_from(Some("0"), None),
+            light(Duration::ZERO, LIGHT_DRAWS)
+        );
+        assert_eq!(
+            rate_from(Some(" 60 "), Some("40")),
+            light(Duration::from_nanos(16_666_666), 40)
+        );
+        assert_eq!(
+            rate_from(Some("120"), Some(" all ")),
+            light(Duration::from_nanos(8_333_333), u32::MAX)
+        );
+        assert_eq!(
+            rate_from(Some("30"), Some("many")),
+            light(Duration::from_nanos(33_333_333), LIGHT_DRAWS)
+        );
+    }
+
+    #[test]
+    fn light_frames_begin_after_a_run_and_end_at_once() {
+        let mut run = 0;
+        for _ in 0..LIGHT_AFTER {
+            run = next_run(run, 12, LIGHT_DRAWS);
+        }
+        assert_eq!(run, LIGHT_AFTER);
+        // One frame of the world's draws ends the run.
+        assert_eq!(next_run(run, 4_700, LIGHT_DRAWS), 0);
+        // At the limit is still light; every frame when the limit is `all`.
+        assert_eq!(next_run(0, LIGHT_DRAWS, LIGHT_DRAWS), 1);
+        assert_eq!(next_run(0, 4_700, u32::MAX), 1);
+        assert_eq!(next_run(u32::MAX, 0, LIGHT_DRAWS), u32::MAX);
+    }
+
+    #[test]
+    fn light_waits_hold_frames_to_the_least_time() {
+        // (The vblank kind: the tick test below uses origin and flip.)
+        const VBLANK: u32 = 1;
+        let least = Duration::from_millis(20);
+        let long = Duration::from_secs(5);
+        let mut slept = Duration::ZERO;
+        let _ = light_wait(VBLANK, least, long, &mut slept);
+        // The next one ends `least` after the last, not on a tick.
+        let before = Instant::now();
+        assert_eq!(light_wait(VBLANK, least, long, &mut slept), S_OK);
+        let took = before.elapsed();
+        assert!(took >= Duration::from_millis(15), "{took:?}");
+        // A poll at once after it: not due yet.
+        assert_eq!(
+            light_wait(VBLANK, least, Duration::ZERO, &mut slept),
+            TIMEOUT
+        );
+        // Not held (`VICTORY_FPS=0`): at once, even for a poll.
+        let before = Instant::now();
+        assert_eq!(
+            light_wait(VBLANK, Duration::ZERO, Duration::ZERO, &mut slept),
+            S_OK
+        );
+        assert!(before.elapsed() < Duration::from_millis(500));
+    }
 
     #[test]
     fn waits_end_on_ticks_and_count_frames() {
