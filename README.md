@@ -40,7 +40,8 @@ Since then (not yet measured side by side with the base): `VICTORY_SKIP_WC_BACK`
 standing frame from 70.1 to **54.4 ms** (mean, in-run A/B on `3430ee0`, faster in 12 of 12
 pairs) and the submitting thread's work from 55.2 to **35.8 ms**; `VICTORY_CCD` (our threads
 placed by core complex) another -3.3 % (far), and its `near` mode -1.5 % more standing and
--14.8 % driving. See [Milestones](#milestones).
+-14.8 % driving. See [Milestones](#milestones). Redacted excerpts of the logs behind these
+numbers are in [run-logs/](run-logs/).
 
 **This repository contains no game files, code or assets.** You need your own copy of the
 software you run with it. The asset policy ([docs/asset-policy.md](docs/asset-policy.md)) is
