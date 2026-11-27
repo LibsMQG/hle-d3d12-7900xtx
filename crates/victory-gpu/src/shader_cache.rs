@@ -105,7 +105,32 @@ fn build() -> [u8; 32] {
     for value in victory_shader::emit::host_settings() {
         hash.update(&value.to_le_bytes());
     }
-    *hash.finalize().as_bytes()
+    let key = *hash.finalize().as_bytes();
+    static SAID: std::sync::Once = std::sync::Once::new();
+    SAID.call_once(|| tracing::info!("{}", key_line_of(&key)));
+    key
+}
+
+/// One line naming the key the translations are cached under, and what it
+/// was made of that a run and `victory shaders` can differ in: the host's
+/// wave width, view-heap null slot, raw view twins and RDNA bits, and
+/// renderer port 5. `victory shaders` fills the run's cache only when its
+/// line says the same key as the run's log.
+pub fn key_line() -> String {
+    // The host first, as a run and [`precompile`] open it: what the card can
+    // do is part of the key.
+    let _ = crate::host::host();
+    key_line_of(&build())
+}
+
+fn key_line_of(key: &[u8; 32]) -> String {
+    let [wave, views, raw, rdna] = victory_shader::emit::host_settings();
+    let hex: String = key[..4].iter().map(|b| format!("{b:02x}")).collect();
+    let port5 = ["off", "on"][usize::from(victory_shader::emit::constants_raw())];
+    format!(
+        "shader cache key {hex}: host wave {wave}, view null slot {views}, raw views {raw}, \
+         RDNA bits {rdna}, port 5 {port5}"
+    )
 }
 
 /// What tells one set of translations from another ([`build`]).

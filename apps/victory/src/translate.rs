@@ -394,12 +394,27 @@ pub fn run(
 }
 
 /// Every shader found into the cache runs translate from.
-pub fn precompile(paths: Vec<PathBuf>, jobs: Option<usize>) -> Result<()> {
+pub fn precompile(paths: Vec<PathBuf>, jobs: Option<usize>, if_new: bool) -> Result<()> {
     let cfg = victory_core::Config::load()?;
-    victory_hle::modules::d3d12x::use_shader_cache(cfg.cache_subdir("shaders")?);
+    let cache = cfg.cache_subdir("shaders")?;
+    victory_hle::modules::d3d12x::use_shader_cache(cache.clone());
     let paths = crate::default_paths(paths)?;
     let threads =
         jobs.unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get()));
+    // A run serves only translations cached under its own key: this line and
+    // the run's log line of the same name must say the same (start this with
+    // the run's VICTORY_* settings, as `play.ps1` does).
+    let key = victory_hle::modules::d3d12x::shader_key_line();
+    println!("{key}");
+    // The key of the last complete pass, beside the cache.
+    let stamp = cache.with_file_name("shaders-done.txt");
+    if if_new && std::fs::read_to_string(&stamp).is_ok_and(|was| was.trim() == key) {
+        println!(
+            "every shader is in the cache under this key already (a complete pass made it); \
+             nothing read"
+        );
+        return Ok(());
+    }
     let started = std::time::Instant::now();
     let seen = Mutex::new(HashSet::new());
     let done = AtomicUsize::new(0);
@@ -450,6 +465,11 @@ pub fn precompile(paths: Vec<PathBuf>, jobs: Option<usize>) -> Result<()> {
     );
     for (why, (n, hash)) in failed {
         println!("  {n:>5}  {why}  (e.g. {hash})");
+    }
+    // (Those that do not translate do not with this key either: the pass
+    // is complete.)
+    if let Err(e) = std::fs::write(&stamp, format!("{key}\n")) {
+        println!("could not write {}: {e}", stamp.display());
     }
     Ok(())
 }

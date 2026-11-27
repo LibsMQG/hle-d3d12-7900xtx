@@ -227,15 +227,17 @@ the card, one after the other), not by RAM or VRAM traffic; port 2's real misses
   then makes the same pipelines through the stream method (measured), so no draw is lost. The 203
   shaders the recompiler cannot translate (geometry shaders of one voxelization pass, three text
   programs, five shadow tracers) are in no pipeline the title draws or dispatches with.
-- Moving fast through new areas (driving): pipelines are compiled when first met (`victory warm
-  --used` builds them ahead), and with 32 GB of RAM free memory falls to 1-2 GB. The title's
+- Moving fast through new areas (driving): pipelines never met in an earlier run are compiled
+  when first met (`play.ps1` builds the ones earlier runs drew with before each start, see
+  [Caches made ahead](#caches-made-ahead)), and with 32 GB of RAM free memory falls to 1-2 GB. The title's
   memory remapping was 300-850 ms a second; with `VICTORY_SOFT_VIEWS=copies` (on in `-Tuned`)
   about 120, nearly all of it the title's own mapping calls, and driving runs at about 9 fps.
 - Trees that vanish and come back, and white dots on some walls, happen with every switch of
   `-Tuned` on or off (checked one by one in drives; port 6 also in an in-run A/B in front of an
   interior wall, where its textures looked the same on and off).
-- After any change to the shader recompiler the first start rebuilds the pipeline cache: several
-  minutes with missing textures before the picture is complete.
+- After any change to the shader recompiler, settings that change the translation or another card,
+  the shader cache is made again: `play.ps1` does it before the title starts (a few minutes,
+  once), instead of several minutes of missing textures in the first run.
 
 ## How to run it
 
@@ -280,6 +282,28 @@ above the title uses about 11 GB of it.
 
 Windows 10/11 x64, a CPU with AVX2, a Direct3D 12 GPU with shader model 6.6 and mesh shaders,
 Rust (the toolchain is pinned) and the MSVC build tools.
+
+### Caches made ahead
+
+Two caches keep the compiling out of the game, and both fill themselves while you play: every
+shader is translated the first time the title asks for it and kept, and every host pipeline is
+kept in a pipeline library and the driver's cache; the pipelines a run drew with are started
+early, while the next run loads. What a run meets for the first time is compiled then (missing
+textures, long frames).
+
+`play.ps1` also makes them ahead before each start (`-Warm auto`, the default), with the same
+settings as the run, since a translation is served only under the key it was made with:
+
+- `victory shaders --if-new <the title's folder>` translates every shader there when the shader
+  cache key changed (a new translator, settings that change the translation, another card): a
+  few minutes once, and nothing read otherwise. It prints the key ("shader cache key ..."); the
+  run's log has the same line, and they must say the same.
+- `victory warm --used` makes the host pipelines earlier runs drew with that the driver's cache
+  does not have yet, in at most four processes, then once more one at a time those left without
+  one. Nothing to do when no run met new pipelines.
+
+`-Warm always` translates again whatever the key; `-Warm off` starts the title at once (scripted
+measurements, or when the caches are known to be warm).
 
 ## Credits
 

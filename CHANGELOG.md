@@ -5,6 +5,22 @@ Each entry names the commit and, where there is one, a tag to go back to:
 (after saving anything newer elsewhere). Frame rates are medians of the log's
 frame lines in the world, diagnostics build, on the PC in the README.
 
+## Caches made ahead by `play.ps1 -Warm` (2026-11-27)
+
+Before each start `play.ps1` runs `victory shaders --if-new <the title's
+folder>` and `victory warm --used` with the run's own settings (`-Warm auto`,
+the default; `always`, `off`). A translation is served only under the key it
+was made with, and that key holds the translator's settings (port 5 among
+them): `victory shaders` started by hand without `-Tuned`'s settings fills the
+cache under another key, and the run then translates everything again. Both now
+print the key ("shader cache key ...": the host's wave width, view-heap null
+slot, raw view twins, RDNA bits and port 5), the run's log too, and `--if-new`
+reads nothing when the last complete pass had the same key. `victory warm`
+starts at most four processes unless asked (sixteen left 1,912 of 2,432
+pipelines without a host pipeline on a cold driver cache, four made all), no
+longer writes down as made a pipeline left without one, and makes those once
+more with one process alone at the end.
+
 ## Eight list translators on 24 threads (2026-11-27)
 
 `play.ps1 -RX7900XTX`, and `-Tuned` on 24 logical processors and more, start

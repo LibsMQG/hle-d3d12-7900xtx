@@ -45,6 +45,7 @@ varies by about 15 ms from run to run, so numbers from separate runs are weaker 
 | `-SkipMovies once` / `all` | Skips the opening movies; `all` also the looping menu backgrounds (they stay dark). |
 | `-Threads <n>`, `-RamGB <n>` | With `-Tuned`: size it as for another machine. |
 | `-More @{NAME='value'}` | Any setting by hand, on top of the preset. |
+| `-Warm auto` / `always` / `off` | Caches made ahead before the title starts, with the run's settings (README, "Caches made ahead"): `auto` (default) translates every shader only when the cache key changed and makes the pipelines earlier runs drew with that the driver lacks; `always` translates again; `off` starts at once. Scripted measurements may want `off` so a start is not held up. |
 | `-List` | Prints the settings and stops. |
 
 ## Settings in `-Tuned` / `-RX7900XTX`, by weight
@@ -114,7 +115,8 @@ ray tracing, mouse and keyboard, FSR and frame generation (README, [Collaboratio
 | Card memory full (12 GB or less) | Use `-Tuned`, not `-RX7900XTX`; lower `VICTORY_CARD_BUFFERS_MB`. |
 | The PC pages (16 GB of RAM or less) | Lower `VICTORY_INPLACE_MB`; keep `VICTORY_PRELUDE_POOL` on. |
 | Dark rooms, missing walls | `VICTORY_SKIP_WC_BACK=0`, `VICTORY_SOFT_VIEWS=off`, one at a time. |
-| Long frames while driving | Expected: pipelines met for the first time (README, Known limits); warm the cache with `victory warm --used`. |
+| Long frames while driving | Expected: pipelines met for the first time (README, Known limits). `-Warm auto` (default) makes the ones earlier runs drew with before the next start, so a second drive through the same places has fewer. |
+| Missing textures for minutes after an update | The shader cache key changed: `-Warm auto` translates everything before the start; check that `victory shaders` and the run's log print the same "shader cache key" line. |
 
 ## How to measure on your own PC
 

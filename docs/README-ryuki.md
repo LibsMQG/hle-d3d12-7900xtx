@@ -78,8 +78,9 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 Unblock-File scripts\play.ps1
 ```
 
-After a first run, `target\diag\victory.exe warm --used` makes the pipelines it
-drew with ahead of the next one. In a diagnostics build,
+`play.ps1` makes the caches ahead before each start (`-Warm`, README "Caches made
+ahead"); by hand, after a first run, `target\diag\victory.exe warm --used` makes the
+pipelines it drew with ahead of the next one. In a diagnostics build,
 `-More @{VICTORY_CAPTURE='<a folder>'}` lets F11 save the next 8 frames there.
 
 ## What was found

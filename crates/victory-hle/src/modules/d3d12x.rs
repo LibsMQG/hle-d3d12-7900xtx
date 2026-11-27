@@ -77,6 +77,19 @@ pub fn precompile(container: &[u8]) -> Result<bool, String> {
     }
 }
 
+/// The key translations are cached under now, and what it is made of
+/// ([`victory_gpu::shader_cache::key_line`]); the host is opened first.
+pub fn shader_key_line() -> String {
+    #[cfg(windows)]
+    {
+        victory_gpu::shader_cache::key_line()
+    }
+    #[cfg(not(windows))]
+    {
+        "no shader cache on this host".into()
+    }
+}
+
 /// The fork's offline warm-up (`victory translate --warm`), by
 /// [`precompile`]: whether it was translated now.
 pub fn warm_shader(container: &[u8]) -> Result<bool, String> {

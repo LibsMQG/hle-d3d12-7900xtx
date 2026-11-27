@@ -31,6 +31,13 @@ pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, t
     if let Some(these) = these {
         return make(&dir, &these);
     }
+    if !dir.is_dir() {
+        println!(
+            "no pipelines written down yet: runs with VICTORY_PIPELINE_BOOK=1 (on in -Tuned) \
+             write them down"
+        );
+        return Ok(());
+    }
     let began = Instant::now();
     victory_hle::known_pipelines::use_translations(dir.with_file_name("shaders"));
     let fingerprint = known::fingerprint();
@@ -59,8 +66,11 @@ pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, t
         .collect();
     all.sort_by_key(|&n| (!early.contains(keys[n].as_str()), &keys[n]));
     all.truncate(limit.unwrap_or(usize::MAX));
+    // At most four processes unless asked: on a cold driver cache sixteen
+    // (two thirds of 24 logical processors) left 1,912 of 2,432 pipelines
+    // without a host pipeline, four made all of them.
     let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let jobs = jobs.unwrap_or(cores * 2 / 3).max(1);
+    let jobs = jobs.unwrap_or((cores * 2 / 3).min(4)).max(1);
     println!(
         "{} pipelines known, {} made before ({fingerprint}), {} bad; {} to make, {jobs} processes",
         keys.len(),
@@ -75,6 +85,9 @@ pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, t
     // (Read back by the runs: these are made beside the others, not before.)
     let slow_out = Mutex::new(std::fs::OpenOptions::new().create(true).append(true).open(dir.join("slow-pipelines.txt"))?);
     let bad_out = Mutex::new(std::fs::OpenOptions::new().create(true).append(true).open(&bad_file)?);
+    // Those a process gave no host pipeline: not written down as made yet,
+    // they are tried again below with one process alone.
+    let without = Mutex::new(Vec::<usize>::new());
     std::thread::scope(|s| {
         for _ in 0..jobs.min(chunks.len()) {
             s.spawn(|| {
@@ -93,7 +106,11 @@ pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, t
                                 println!("{count} of {}, {:.0} s", all.len(), began.elapsed().as_secs_f64());
                             }
                             drop(state);
-                            let _ = writeln!(lock(&done_out), "{fingerprint} {}", keys[n]);
+                            if there {
+                                let _ = writeln!(lock(&done_out), "{fingerprint} {}", keys[n]);
+                            } else {
+                                lock(&without).push(n);
+                            }
                         });
                         rest = &rest[made.min(rest.len())..];
                         match (ended, rest.split_first()) {
@@ -112,6 +129,44 @@ pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, t
         }
     });
     let (mut times, refused, crashed) = state.into_inner().unwrap_or_else(|e| e.into_inner());
+    // Those left without a host pipeline, once more with one process at a
+    // time (the driver's compiler beside no other).
+    let mut without = without.into_inner().unwrap_or_else(|e| e.into_inner());
+    without.sort_unstable();
+    let (mut now, mut still) = (0usize, 0usize);
+    if !without.is_empty() {
+        let n = without.len();
+        println!("{n} without a host pipeline: made again, one process at a time");
+        for chunk in without.chunks(AT_ONCE) {
+            let mut rest = chunk;
+            while !rest.is_empty() {
+                // Written down either way now: one that has none with one
+                // process alone has none with this translator and driver,
+                // and is tried again only when one of them changes.
+                let (made, ended) = child(rest, |n, _, there| {
+                    if there {
+                        now += 1;
+                    } else {
+                        still += 1;
+                    }
+                    let _ = writeln!(lock(&done_out), "{fingerprint} {}", keys[n]);
+                });
+                rest = &rest[made.min(rest.len())..];
+                match (ended, rest.split_first()) {
+                    (Some(why), Some((&n, after))) => {
+                        println!("pipeline {n} {}: {why}", keys[n]);
+                        let _ = writeln!(lock(&bad_out), "{} {why}", keys[n]);
+                        rest = after;
+                    }
+                    _ => break,
+                }
+            }
+        }
+        println!(
+            "of those, {now} made now, {still} still without one (tried again after a change \
+             of translator or driver)"
+        );
+    }
     times.sort_by(f64::total_cmp);
     let at = |q: f64| times.get((times.len() as f64 * q) as usize).copied().unwrap_or(0.0);
     println!(

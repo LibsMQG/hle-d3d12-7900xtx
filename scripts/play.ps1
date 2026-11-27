@@ -18,6 +18,12 @@
 #               screens, the pause menu, the map), in place of the title's 30: 60 by default
 #               (not with -Safe), 0 for no limit, off for the title's 30. The world stays at
 #               the title's 30; VICTORY_FPS
+# -Warm         the caches made ahead before the title starts, with this line's settings:
+#               auto (the default) translates every shader of the title's folder only when
+#               the shader cache key changed (a new translator, other settings, another
+#               card; a few minutes), then makes the host pipelines earlier runs drew with
+#               that the driver's cache does not have yet (`victory warm --used`); always
+#               translates again whatever the key; off starts the title at once
 # -List         only print the settings this line would start with, and stop
 # -More         other settings: -More @{VICTORY_PANEL='1'}
 # Run it from a normal window, not as administrator: the driver then keeps its shader cache elsewhere.
@@ -33,6 +39,7 @@ param(
     [ValidateSet('once', 'all')][string]$SkipMovies = '',
     [ValidateSet('diag', 'release')][string]$Build = 'diag',
     [ValidatePattern('^(\d{1,4}|off)$')][string]$Fps = '60',
+    [ValidateSet('auto', 'always', 'off')][string]$Warm = 'auto',
     [hashtable]$More = @{}
 )
 # VICTORY_CARD_AWAKE (the card's clocks kept up between submissions, host/awake.rs) is
@@ -225,4 +232,15 @@ Get-ChildItem Env:VICTORY_* | Where-Object { $_.Name -notin $paths } | ForEach-O
 foreach ($k in $settings.Keys) { Set-Item "Env:$k" $settings[$k] }
 $Exe = (Resolve-Path $Exe).Path
 Push-Location (Join-Path $PSScriptRoot '..')   # victory.toml is looked for here
-try { & $victory run $Exe --execute } finally { Pop-Location }
+try {
+    # The caches made ahead, with the same settings as the run (a translation is
+    # served only under the key it was made with): shaders when the key changed,
+    # then the pipelines earlier runs drew with that the driver does not have yet.
+    if ($Warm -ne 'off') {
+        $folder = Split-Path $Exe -Parent
+        Write-Host "play.ps1: caches ahead (-Warm $Warm; -Warm off skips this)"
+        if ($Warm -eq 'always') { & $victory shaders $folder } else { & $victory shaders --if-new $folder }
+        & $victory warm --used
+    }
+    & $victory run $Exe --execute
+} finally { Pop-Location }
