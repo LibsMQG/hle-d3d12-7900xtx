@@ -175,7 +175,7 @@ the card, one after the other), not by RAM or VRAM traffic; port 2's real misses
 - **CI**: clippy clean with `-D warnings` in both CI variants; tests that share global state
   (watch, call hooks) run one at a time, so the suite no longer fails at random. The CI machine
   has no graphics card (its device is the software adapter, WARP), so the depth-bounds test
-  checks the depth-test-off case on hardware only; before that it failed on every CI run and
+  checks the depth-test-off case only on an AMD, NVIDIA or Intel card; before that it failed on every CI run and
   the tests of the other crates never ran there.
 
 ## Known limits
