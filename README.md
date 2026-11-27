@@ -14,7 +14,9 @@ Maintained by **libs**: the ports, measurements, diagnostics and launcher preset
 
 This fork (`main` at `1ef9e07`, `play.ps1 -Tuned`) against the RYUKI base it started from
 (its own tuned settings), same PC, same fixed test spot standing still, diagnostics builds,
-no errors in the log, picture complete in both.
+no errors in the log, picture complete in both. Both at the title's own output resolution (no
+upscaler or render scale of ours), no frame generation, ray-traced light off (see
+[Known limits](#known-limits)).
 
 | | RYUKI base | This fork | Gain |
 |---|---|---|---|
@@ -63,7 +65,8 @@ Contents: [Results](#results-at-a-glance) · [PC](#the-pc-it-is-measured-on) ·
 
 ## Milestones
 
-Standing still in one fixed test spot, release or diagnostics build, median frame time.
+Standing still in one fixed test spot, release or diagnostics build, median frame time; the
+title's own output resolution, no frame generation, ray-traced light off.
 
 | Date | Where it stood |
 |---|---|
@@ -77,7 +80,8 @@ Standing still in one fixed test spot, release or diagnostics build, median fram
 | 2026-11-27 | Write-combined memory of 1 MiB and over kept on the card (`VICTORY_SKIP_WC_BACK`, from klbf-lab): **about 54 ms (18.4 fps)**, submitting thread ~36 ms, the card waiting for it 22.5 -> 10.0 ms a frame; then `VICTORY_CCD` (our threads placed by core complex): far -3.3 %, near another -1.5 % standing and -14.8 % driving. |
 
 Moving fast through the world is still far slower (driving: median about 77 ms, p99 about 240 ms,
-with everything in `-Tuned` on): pipelines met for the first time and memory pressure, see
+with everything in `-Tuned` on before `VICTORY_CCD=near`, which took another 14.8 % off the
+driving frames in its A/B): pipelines met for the first time and memory pressure, see
 [Known limits](#known-limits).
 
 ## Where the code comes from
@@ -169,7 +173,10 @@ the card, one after the other), not by RAM or VRAM traffic; port 2's real misses
 - **One fix reverted**: the quad-read derivative change from the all-forks merge was taken out
   again on this tree.
 - **CI**: clippy clean with `-D warnings` in both CI variants; tests that share global state
-  (watch, call hooks) run one at a time, so the suite no longer fails at random.
+  (watch, call hooks) run one at a time, so the suite no longer fails at random. The CI machine
+  has no graphics card (its device is the software adapter, WARP), so the depth-bounds test
+  checks the depth-test-off case on hardware only; before that it failed on every CI run and
+  the tests of the other crates never ran there.
 
 ## Known limits
 
