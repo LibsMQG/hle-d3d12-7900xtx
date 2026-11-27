@@ -3167,9 +3167,27 @@ pub(crate) fn remap_marks_line() {
     );
 }
 
-/// Gives write access back to `blocks`, guarded ones.
+/// Whether `[from, to)` is one region of pages with the same attributes
+/// (one allocation or view), read-only or writable as [`unguard`] leaves
+/// guarded memory.
+fn one_region_of_ours(from: usize, to: usize) -> bool {
+    use windows_sys::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, PAGE_READONLY, PAGE_READWRITE, VirtualQuery};
+    // SAFETY: a zeroed MEMORY_BASIC_INFORMATION is valid.
+    let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: reads the address space's bookkeeping, not the memory.
+    let n = unsafe { VirtualQuery(from as *const _, &mut info, size_of::<MEMORY_BASIC_INFORMATION>()) };
+    n != 0 && info.BaseAddress as usize <= from && info.BaseAddress as usize + info.RegionSize >= to && matches!(info.Protect, PAGE_READONLY | PAGE_READWRITE)
+}
+
+/// Gives write access back to `blocks`, guarded ones, neighbouring 64 KiB
+/// blocks in one `VirtualProtect` each run (`VICTORY_UNGUARD_RUNS=0`: one
+/// call a block, as before; from VIctory-RDNA 8abd367): a view the runtime
+/// maps over guarded memory opens all its blocks at once.
 fn unguard(g: &Guards, blocks: &[usize]) {
     use windows_sys::Win32::System::Memory::{PAGE_READONLY, PAGE_READWRITE, VirtualProtect};
+    if blocks.is_empty() {
+        return;
+    }
     #[cfg(feature = "diagnostics")]
     let started = std::time::Instant::now();
     // All of them before the first can be written: a write through one is a
@@ -3179,7 +3197,7 @@ fn unguard(g: &Guards, blocks: &[usize]) {
         g.clean.remove(block);
         PUBLISHED.clear(block);
     }
-    for &block in blocks {
+    let unguard_one = |block: usize| {
         let mut old = 0;
         // SAFETY: a block we made read-only.
         unsafe {
@@ -3192,11 +3210,50 @@ fn unguard(g: &Guards, blocks: &[usize]) {
             }
         }
         PROTECTED.clear(block);
+    };
+    if blocks.len() == 1 || !crate::toggled!("VICTORY_UNGUARD_RUNS") {
+        for &block in blocks {
+            unguard_one(block);
+        }
+    } else {
+        let mut sorted = blocks.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        let mut i = 0;
+        while i < sorted.len() {
+            let from = sorted[i];
+            let mut end = from + 1;
+            let mut j = i + 1;
+            while j < sorted.len() && sorted[j] == end {
+                end += 1;
+                j += 1;
+            }
+            // One call for the run only where all of it is one region of
+            // ours (read-only or writable, as we leave it): `VirtualProtect`
+            // tells the old protection of the first page alone, and a run
+            // over two views fails.
+            let mut done = false;
+            if end - from > 1 && one_region_of_ours(from * BLOCK, end * BLOCK) {
+                let mut old = 0;
+                // SAFETY: neighbouring blocks we made read-only, in one region
+                // whose pages are all read-only or writable.
+                done = unsafe { VirtualProtect((from * BLOCK) as *const _, (end - from) * BLOCK, PAGE_READWRITE, &mut old) != 0 };
+                if done {
+                    for block in from..end {
+                        PROTECTED.clear(block);
+                    }
+                }
+            }
+            if !done {
+                for block in from..end {
+                    unguard_one(block);
+                }
+            }
+            i = j;
+        }
     }
     #[cfg(feature = "diagnostics")]
-    if !blocks.is_empty() {
-        tally(8, started.elapsed().as_nanos() as u64);
-    }
+    tally(8, started.elapsed().as_nanos() as u64);
 }
 
 /// Before our own write into title memory `[at, at + len)` through the
@@ -5929,3 +5986,30 @@ mod port7_tests {
     }
 }
 
+
+#[cfg(test)]
+mod unguard_runs_tests {
+    use super::{BLOCK, one_region_of_ours};
+    use windows_sys::Win32::System::Memory::{
+        MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READONLY, PAGE_READWRITE, VirtualAlloc, VirtualFree, VirtualProtect,
+    };
+
+    /// A run is opened in one call only where all of it is one region of
+    /// read-only or writable pages.
+    #[test]
+    fn a_run_is_one_region_of_ours_only_when_its_pages_agree() {
+        // SAFETY: four blocks of our own, released below; nothing reads them.
+        unsafe {
+            let at = VirtualAlloc(std::ptr::null(), 4 * BLOCK, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) as usize;
+            assert_ne!(at, 0);
+            let mut old = 0;
+            assert_ne!(VirtualProtect(at as *const _, 4 * BLOCK, PAGE_READONLY, &mut old), 0);
+            assert!(one_region_of_ours(at, at + 4 * BLOCK), "all read-only");
+            assert!(!one_region_of_ours(at, at + 5 * BLOCK), "past the allocation");
+            assert_ne!(VirtualProtect((at + BLOCK) as *const _, BLOCK, PAGE_READWRITE, &mut old), 0);
+            assert!(!one_region_of_ours(at, at + 4 * BLOCK), "one block writable among read-only ones");
+            assert!(one_region_of_ours(at + 2 * BLOCK, at + 4 * BLOCK), "the read-only tail");
+            VirtualFree(at as *mut _, 0, MEM_RELEASE);
+        }
+    }
+}
