@@ -264,9 +264,9 @@ presets is pointed there by [CLAUDE.md](CLAUDE.md). Even on the reference PC `-T
 
 How `-Tuned` sizes the parts that depend on the machine:
 
-| | 16+ logical processors | 12-15 | 8-11 | under 8 |
-|---|---|---|---|---|
-| Our helper threads (`THIN` / `UNDER` / `LAND_THREADS`) | 4 / 3 / 3 (measured) | 3 / 2 / 2 | 2 / 1 / 1 | 1 / 1 / 1 |
+| | 24+ logical processors | 16-23 | 12-15 | 8-11 | under 8 |
+|---|---|---|---|---|---|
+| Our helper threads (`THIN` / `UNDER` / `LAND_THREADS`) | 8 / 3 / 3 (measured) | 4 / 3 / 3 (measured) | 3 / 2 / 2 | 2 / 1 / 1 | 1 / 1 / 1 |
 
 Memory kept in place (`VICTORY_INPLACE_MB`): 3072 MB with 32 GB of RAM (measured), 1536 with
 16-31 GB, 768 under 16. Card buffer copies (`VICTORY_CARD_BUFFERS_MB`) are left to the build,
