@@ -1092,6 +1092,14 @@ fn frame_ends() {
             behind::leave();
         }
     });
+    // `VICTORY_CCD` in an in-run A/B: our threads are placed again when its
+    // phase changes.
+    if let Some(on) = crate::ab::pick("VICTORY_CCD") {
+        static WAS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if WAS.swap(on, std::sync::atomic::Ordering::Relaxed) != on {
+            crate::cores::settle();
+        }
+    }
 }
 
 /// The frame a present shows, and the title's resource it shows.
