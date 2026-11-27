@@ -77,6 +77,17 @@ if ($RX7900XT) {
     # views, which no write of the CPU to the heap's addresses makes (a writer
     # trace caught only the six stores). No picture defect standing or walking.
     $settings.VICTORY_PORT_DESCRIPTORS = '1'
+    # Host memory: preludes come from one pool shared by all lists, handed back
+    # when their submission's fence is passed, in place of one command allocator
+    # (about 1 MB, never given back) for each list; and idle host lists are let
+    # go after 10 s. Jail, standing, two pairs of runs: own preludes 1050 -> 0
+    # (the pool made 74 and handed them out 356251 times), 313 idle lists let go,
+    # write-combined memory 13.93 -> 12.43 GB with the same textures alive (the
+    # other pair held 1 GB more textures and showed no total drop). In-run A/B
+    # (15 phases of 20 s): the pool +1.6% frame time, within the 2% kept; the
+    # idle let-go -0.2%.
+    $settings.VICTORY_PRELUDE_POOL = '1'
+    $settings.VICTORY_LIST_POOL_IDLE_S = '10'
 }
 foreach ($k in $More.Keys) { $settings[$k] = $More[$k] }
 
