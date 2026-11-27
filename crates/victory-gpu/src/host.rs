@@ -9128,6 +9128,11 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
     if len == 0 {
         return;
     }
+    if title_dst {
+        // (`VICTORY_SOFT_VIEWS`) As in [`write_mapped`].
+        crate::watch::soft_make_real(dst as usize, len, crate::watch::SOFT_BY_OUR_WRITE);
+        crate::watch::soft_would_write(dst as usize, len);
+    }
     // A title destination that is not all mapped is left alone. Asking
     // Windows first (`VirtualQuery`) walks the page tables to the end of
     // the destination's region: in the title's big blocks that is
@@ -9187,11 +9192,32 @@ fn read_sparse(src: *const u8, dst: *mut u8, len: usize) {
         let at = src.wrapping_add(offset);
         let to = dst.wrapping_add(offset);
         let remaining = len - offset;
+        // (`VICTORY_SOFT_VIEWS`) A view in the runtime's books alone is a
+        // placeholder to the host, which would have it read as zeros: read
+        // from its pages ([`read`]); the host is asked only about what lies
+        // before the next one.
+        let mut plain = remaining;
+        if crate::watch::soft_any(at as usize, remaining) {
+            const BLOCK: usize = 64 << 10;
+            let first = at as usize / BLOCK;
+            let next = crate::watch::soft_next(first, (at as usize).saturating_add(remaining).div_ceil(BLOCK));
+            if next == Some(first) {
+                let n = (BLOCK - at as usize % BLOCK).min(remaining);
+                if !read(at, to, n) {
+                    read_pieces(at, to, n);
+                }
+                offset += n;
+                continue;
+            }
+            if let Some(next) = next {
+                plain = (next * BLOCK - at as usize).min(remaining);
+            }
+        }
         // SAFETY: the query inspects an address and fills a local structure.
         let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
         let size = unsafe { VirtualQuery(at.cast(), &mut info, size_of_val(&info)) };
         let n = (info.BaseAddress as usize).saturating_add(info.RegionSize)
-            .saturating_sub(at as usize).min(remaining);
+            .saturating_sub(at as usize).min(plain);
         if size != size_of_val(&info) || n == 0 {
             read_pieces(at, to, remaining);
             break;
@@ -9293,6 +9319,33 @@ pub(crate) fn read_there(src: *const u8, dst: &mut [u8]) -> usize {
 /// Copies `len` bytes from `src` to `dst` unless a source page is not
 /// readable.
 fn read(src: *const u8, dst: *mut u8, len: usize) -> bool {
+    // (`VICTORY_SOFT_VIEWS`) Views the runtime keeps in its books alone are
+    // read from their pages and stay as they are; what lies between them as
+    // before.
+    if crate::watch::soft_any(src as usize, len) {
+        let mut done = 0;
+        while done < len {
+            let (at, to) = (src.wrapping_add(done), dst.wrapping_add(done));
+            let Some((books, n)) = crate::watch::soft_read(at as usize, to, len - done) else {
+                return read_here(at, to, len - done);
+            };
+            if n == 0 || !books && !read_here(at, to, n) {
+                return false;
+            }
+            done += n;
+        }
+        return true;
+    }
+    let done = read_here(src, dst, len);
+    // (verify) What of it would have come from the books is compared with them.
+    if done {
+        crate::watch::soft_verify(src as usize, len);
+    }
+    done
+}
+
+/// [`read`] of memory none of which is in the runtime's books alone.
+fn read_here(src: *const u8, dst: *mut u8, len: usize) -> bool {
     use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
     if crate::safecopy::on() {
@@ -9336,6 +9389,10 @@ fn direct_writes() -> bool {
 pub(crate) fn write_mapped(dst: *mut u8, src: *const u8, len: usize) {
     use windows_sys::Win32::System::Diagnostics::Debug::WriteProcessMemory;
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    // (`VICTORY_SOFT_VIEWS`) Views in the runtime's books alone under the
+    // destination are made real first: the kernel's write does not fault.
+    crate::watch::soft_make_real(dst as usize, len, crate::watch::SOFT_BY_OUR_WRITE);
+    crate::watch::soft_would_write(dst as usize, len);
     let direct = direct_writes();
     let since = crate::watch::changes();
     let write = |at: usize, n: usize| {
