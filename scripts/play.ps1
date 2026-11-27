@@ -79,15 +79,17 @@ if ($RX7900XT) {
     $settings.VICTORY_PORT_DESCRIPTORS = '1'
     # Host memory: preludes come from one pool shared by all lists, handed back
     # when their submission's fence is passed, in place of one command allocator
-    # (about 1 MB, never given back) for each list; and idle host lists are let
-    # go after 10 s. Jail, standing, two pairs of runs: own preludes 1050 -> 0
-    # (the pool made 74 and handed them out 356251 times), 313 idle lists let go,
-    # write-combined memory 13.93 -> 12.43 GB with the same textures alive (the
-    # other pair held 1 GB more textures and showed no total drop). In-run A/B
-    # (15 phases of 20 s): the pool +1.6% frame time, within the 2% kept; the
-    # idle let-go -0.2%.
+    # (about 1.5 MB, never given back) for each list. Jail, standing, two pairs
+    # of runs: own preludes 1050 -> 0 (the pool made 74 and handed them out
+    # 356251 times), write-combined memory 13.93 -> 12.43 GB with the same
+    # textures alive (the other pair held 1 GB more textures and showed no
+    # total drop). In-run A/B (15 phases of 20 s): +1.6% frame time, within
+    # the 2% kept.
+    # VICTORY_LIST_POOL_IDLE_S stays 0 (idle host lists kept): at 10 s most of
+    # the lists it let go were made again on the title's threads within minutes
+    # (194 let go, 169 made again; 313 and 259 in the other pair), for about 25
+    # fewer lists alive.
     $settings.VICTORY_PRELUDE_POOL = '1'
-    $settings.VICTORY_LIST_POOL_IDLE_S = '10'
     # The heaps' descriptor records read where they are and compared with AVX2
     # as read, in place of a copy of each changed page first (from zeex64's
     # fork). In-run A/B (19 pairs of 20 s phases: jail, cutscenes, swimming,
