@@ -72,17 +72,24 @@ if ($Tuned) {
     # (-Safe keeps one part per joined submission: it is the line to start from when something is wrong.)
     if (-not $Safe) { $settings.VICTORY_JOIN_PARTS = '16' }; $settings.VICTORY_JOIN_LISTS = '96'
     $settings.VICTORY_TITLE_PRIORITIES = '1'
-    # Fewer of our threads translating list calls and comparing title bytes
-    # (8 and 6 were for a 24-thread CPU): on 16 the title's own threads ran
-    # short (free roam: 6-13 ms less preparing a frame, CHANGELOG.md). 4/3/3
-    # is the measured line (16 and 24 threads); fewer logical processors get
-    # fewer of ours, so the title's own threads are not starved: 3/2/2 from 12,
-    # 2/1/1 from 8, 1/1/1 under 8 (scaled by the same rule, not measured).
+    # Our threads that translate list calls, compare title bytes and land
+    # copies, sized to the processor so that the title's own threads are not
+    # starved. 8/3/3 from 24 logical processors: in-run A/B on a Ryzen 9 5900X
+    # with VICTORY_CCD=near (the translators on the core complex without the
+    # title), jail, standing, two runs: eight translators against four, frames
+    # -0.8% and -3.4% (median against the neighbours), p90 -7% and -9%, the
+    # submitting thread's wait for lists still being translated 24-26 -> 11 ms
+    # a frame; the translators' work grows by a third (one list is translated
+    # by one thread, and the longest still takes ~30 ms). 4/3/3 from 16 (8 and
+    # 6 were too many there: the title's own threads ran short, free roam 6-13
+    # ms less preparing a frame, CHANGELOG.md). Fewer logical processors get
+    # fewer of ours: 3/2/2 from 12, 2/1/1 from 8, 1/1/1 under 8 (scaled by the
+    # same rule, not measured).
     if ($RX7900XTX) {
-        $thin, $under, $land = 4, 3, 3
+        $thin, $under, $land = 8, 3, 3
     } else {
         $n = $(if ($Threads) { $Threads } else { [Environment]::ProcessorCount })
-        $thin, $under, $land = $(if ($n -ge 16) { 4, 3, 3 } elseif ($n -ge 12) { 3, 2, 2 } elseif ($n -ge 8) { 2, 1, 1 } else { 1, 1, 1 })
+        $thin, $under, $land = $(if ($n -ge 24) { 8, 3, 3 } elseif ($n -ge 16) { 4, 3, 3 } elseif ($n -ge 12) { 3, 2, 2 } elseif ($n -ge 8) { 2, 1, 1 } else { 1, 1, 1 })
         $machine += "$n threads"
     }
     $settings.VICTORY_THIN_THREADS = "$thin"; $settings.VICTORY_UNDER_THREADS = "$under"

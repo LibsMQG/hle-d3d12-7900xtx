@@ -5,6 +5,19 @@ Each entry names the commit and, where there is one, a tag to go back to:
 (after saving anything newer elsewhere). Frame rates are medians of the log's
 frame lines in the world, diagnostics build, on the PC in the README.
 
+## Eight list translators on 24 threads (2026-11-27)
+
+`play.ps1 -RX7900XTX`, and `-Tuned` on 24 logical processors and more, start
+eight threads that translate list calls (`VICTORY_THIN_THREADS=8`) in place of
+four. In-run A/B on the reference PC (Ryzen 9 5900X, `VICTORY_CCD=near`, so the
+translators sit on the core complex without the title's threads), jail,
+standing, two runs of 20 s phases: frames -0.8% and -3.4% (median against the
+neighbours), p90 -7% and -9%. With four, the submitting thread stood 24-26 ms a
+frame at lists not translated yet, and a list waited 26 ms on average after
+the title closed it; with eight, 11 ms and 7 ms. The translators' work grows by
+a third (more threads share the same structures). One list is still translated
+by one thread at a time: the longest (some 1,900 calls) takes about 30 ms.
+
 ## `play.ps1 -Tuned` (2026-11-27)
 
 The measured settings are started with `-Tuned`, in place of `-RX7900XT`: most
