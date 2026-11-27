@@ -691,7 +691,7 @@ static SYNC_SHORT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::
 /// fork it comes from (a line apart from ours, run heapsync-ab2 in the
 /// street) the pass went from 15.7-16.2 to 12.7 ms a frame, its threads'
 /// copy and compare from 13.3 to 7.4 ms. Here, in-run A/B heapsync-ab1
-/// (-RX7900XT, 19 pairs of 20 s phases: jail, cutscenes, swimming, the
+/// (-Tuned, 19 pairs of 20 s phases: jail, cutscenes, swimming, the
 /// world standing): reading and comparing 4.6 -> 3.3 ms a frame, lower in
 /// every pair; the pass -0.8 to -1.1 ms, the submitting thread's wait for
 /// it -0.4 ms (3.0 -> 2.3); frame times within the phases' noise; no page

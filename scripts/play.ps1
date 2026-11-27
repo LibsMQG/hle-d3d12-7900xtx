@@ -3,14 +3,17 @@
 # -Safe         without the newer, faster ways (the first thing to try when something is wrong)
 # -RayTracing   the title's own ray-traced indirect light: lit interiors, about a third slower
 # -Build        target\diag (the default, the build all measurements are of) or target\release
-# -RX7900XT     also the settings measured best on an RX 7900 XT with 32 GB of RAM (docs/rx7900xt.md)
+# -Tuned        also the settings measured best here (RX 7900 XT, 8-core/16-thread CPU, 32 GB of RAM;
+#               docs/rx7900xt.md); -RX7900XT is the same switch under its old name
+# -List         only print the settings this line would start with, and stop
 # -More         other settings: -More @{VICTORY_PANEL='1'}
 # Run it from a normal window, not as administrator: the driver then keeps its shader cache elsewhere.
 param(
     [Parameter(Mandatory)][string]$Exe,
     [switch]$Safe,
     [switch]$RayTracing,
-    [switch]$RX7900XT,
+    [Alias('RX7900XT')][switch]$Tuned,
+    [switch]$List,
     [ValidateSet('diag', 'release')][string]$Build = 'diag',
     [hashtable]$More = @{}
 )
@@ -29,7 +32,7 @@ if ($Safe) {
     $settings.VICTORY_THIN = '1'; $settings.VICTORY_JOIN_PARTS = '8'; $settings.VICTORY_UPLOAD_AHEAD = '1'
 }
 if ($RayTracing) { $settings.VICTORY_BVH_BUILDER = '1' }
-if ($RX7900XT) {
+if ($Tuned) {
     # Shader-write compares on the card for buffers of 1 MiB and more; less committed
     # memory in windows of title memory (about 5 GB less); smaller texture steps at scene
     # cuts; windows in private memory used in place; pipelines written down for "victory warm".
@@ -43,7 +46,8 @@ if ($RX7900XT) {
     # title's idle threads at below normal (16 threads are not enough for them
     # to wait their turn).
     $settings.VICTORY_ASK_EARLY = '2'; $settings.VICTORY_HEAP_SYNC_EARLY = '1'
-    $settings.VICTORY_JOIN_PARTS = '16'; $settings.VICTORY_JOIN_LISTS = '96'
+    # (-Safe keeps one part per joined submission: it is the line to start from when something is wrong.)
+    if (-not $Safe) { $settings.VICTORY_JOIN_PARTS = '16' }; $settings.VICTORY_JOIN_LISTS = '96'
     $settings.VICTORY_TITLE_PRIORITIES = '1'
     # Fewer of our threads translating list calls and comparing title bytes
     # (8 and 6 were for a 24-thread CPU): on 16 the title's own threads ran
@@ -99,6 +103,13 @@ if ($RX7900XT) {
     $settings.VICTORY_SYNC_IN_PLACE = '1'
 }
 foreach ($k in $More.Keys) { $settings[$k] = $More[$k] }
+
+# What this start runs with, one line, so a log or a terminal shows which preset it was.
+$names = @(); if ($Tuned) { $names += 'Tuned' }; if ($Safe) { $names += 'Safe' }; if ($RayTracing) { $names += 'RayTracing' }
+if ($names.Count -eq 0) { $names = @('base') }
+$line = ($settings.Keys | Sort-Object | ForEach-Object { "$($_ -replace '^VICTORY_', '')=$($settings[$_])" }) -join ' '
+Write-Host "play.ps1 [$($names -join ' + ')] $Build, $($settings.Count) settings: $line"
+if ($List) { return }
 
 $victory = Join-Path $PSScriptRoot "..\target\$Build\victory.exe"
 if (-not (Test-Path $victory)) { Write-Host "No $victory. Build it first (README.md)."; return }

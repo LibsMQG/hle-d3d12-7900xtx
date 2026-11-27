@@ -60,14 +60,14 @@ copy victory.example.toml victory.toml      # then set your paths, outside this 
 cargo build --locked --profile diag -p victory --features diagnostics
 $env:VICTORY_HOST_WAVE = '64'; $env:VICTORY_VIEW_LIMIT = '2097151'
 target\diag\victory.exe shaders <the shader archives>   # every shader translated ahead, minutes
-scripts\play.ps1 -RX7900XT -Exe <path of your copy's executable>
+scripts\play.ps1 -Tuned -Exe <path of your copy's executable>
 ```
 
 For playing, build `--release` instead (about a fifth faster per frame than
 the diagnostics build here: CHANGELOG.md), translate the shaders with
 `target\release\victory.exe`, and add `-Build release` to the line above.
-`-RX7900XT` adds the settings measured on this PC to the fork's own (they are
-listed in the script).
+`-Tuned` adds the settings measured on this PC to the fork's own (they are
+listed in the script, and `-List` prints them; `-RX7900XT` still works, the old name).
 
 If PowerShell says running scripts is disabled on this system, allow scripts
 from your own disk for your user account (Microsoft's documented setting;

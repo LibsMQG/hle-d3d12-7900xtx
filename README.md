@@ -52,10 +52,10 @@ Every commit taken from elsewhere keeps its author and, where it was a cherry-pi
 | Source | What it is | What we took, and why |
 |---|---|---|
 | [YukiRyuu/RYUKI-7900XT](https://github.com/YukiRyuu/RYUKI-7900XT) | 7900 XT/XTX fork with 32 GB work and many community forks merged | **The base tree** (the root commit). Chosen because it was already faster than our first line, so our work was ported onto it piece by piece. |
-| [avatarmanz/VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX) | 7900 XTX fork that carries the upstream renderer patches | **Renderer ports 1, 5, 6, 7** and the halving search for ranges asked ahead. Aim: the submitting thread, which is what limits the frame. Ports 1 and 5 are on in `play.ps1 -RX7900XT`; 6 and 7 stay off (measured: no gain or worse). |
-| [polackangry/POLSKAGUROM](https://github.com/polackangry/POLSKAGUROM) | NVIDIA-oriented fork on the upstream line | **Renderer port 2** (`VICTORY_PORT_DESCRIPTORS`): the title's descriptor-record stores report their slots instead of the whole view heap being scanned. Submitting thread -4 ms, heap rounds 28 -> 19 ms. On in `-RX7900XT`. |
+| [avatarmanz/VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX) | 7900 XTX fork that carries the upstream renderer patches | **Renderer ports 1, 5, 6, 7** and the halving search for ranges asked ahead. Aim: the submitting thread, which is what limits the frame. Ports 1 and 5 are on in `play.ps1 -Tuned`; 6 and 7 stay off (measured: no gain or worse). |
+| [polackangry/POLSKAGUROM](https://github.com/polackangry/POLSKAGUROM) | NVIDIA-oriented fork on the upstream line | **Renderer port 2** (`VICTORY_PORT_DESCRIPTORS`): the title's descriptor-record stores report their slots instead of the whole view heap being scanned. Submitting thread -4 ms, heap rounds 28 -> 19 ms. On in `-Tuned`. |
 | [XaviFortes/VIctory-RDNA](https://github.com/XaviFortes/VIctory-RDNA) | RX 7900 XT fork focused on the submitting thread | AVX2 compare in `Shadow::take`, a lock-free "anything pending?" flag with a `RwLock`, 4 MiB journal pieces, `VICTORY_PORT_BUFFERS` (title buffers above 4 GiB in place, big ones kept in VRAM). Together about -5 ms a frame. Its unconditional in-place card-step changes were left out (no effect here, correctness risk). |
-| [zeex64/victory-7900xtx](https://github.com/zeex64/victory-7900xtx) | Fork on the upstream line, run under Linux/Proton | **`VICTORY_SYNC_IN_PLACE`** (ported, adapted to port 2's parts): the heaps' descriptor records read where they are and compared with AVX2 as read, in place of a copy of each changed page first. Reading and comparing 4.6 -> 3.3 ms a frame, the submitting thread's wait for it -0.4 ms. On in `-RX7900XT`. Its other speed switches were already here (`VICTORY_SLOT_BITS`) or turned off by its own measurements; its Linux and Wine work does not apply. |
+| [zeex64/victory-7900xtx](https://github.com/zeex64/victory-7900xtx) | Fork on the upstream line, run under Linux/Proton | **`VICTORY_SYNC_IN_PLACE`** (ported, adapted to port 2's parts): the heaps' descriptor records read where they are and compared with AVX2 as read, in place of a copy of each changed page first. Reading and comparing 4.6 -> 3.3 ms a frame, the submitting thread's wait for it -0.4 ms. On in `-Tuned`. Its other speed switches were already here (`VICTORY_SLOT_BITS`) or turned off by its own measurements; its Linux and Wine work does not apply. |
 | [WillyboPeep/victory-all-forks](https://github.com/WillyboPeep/victory-all-forks) | A merge of many community forks | **Correctness fixes**, not speed: use-after-free in audio, queues and fences; save-data validation; loader, GPU, shader-recompiler and DirectStorage fixes; frame-wait ticks; Bink skip. Full list under [Fixes taken from others](#fixes-taken-from-others). |
 | [VIctory](https://github.com/Marvisak/VIctory) | The upstream project | Through all of the above. One idea re-written by us: a submission's one asking holds every range over both its parts (after upstream `e000e02`). |
 
@@ -120,7 +120,7 @@ the card, one after the other), not by RAM or VRAM traffic; port 2's real misses
   `VICTORY_WIDE_SMALL`) so each one could be measured: 256 KiB wide jobs turned out slower and
   are now opt-in; port 2 can be flipped inside a run. Changes were measured with the base
   tree's in-run A/B (`VICTORY_AB`), since the same build varies ~15 ms from run to run.
-- **Measured defaults in `play.ps1 -RX7900XT`**: card clocks no longer kept up
+- **Measured defaults in `play.ps1 -Tuned`**: card clocks no longer kept up
   (`VICTORY_CARD_AWAKE` off); ports 1, 5, 2 and `VICTORY_PORT_BUFFERS` on; ports 6 and 7 off.
 - **One fix reverted**: the quad-read derivative change from the all-forks merge was taken out
   again on this tree.
@@ -153,7 +153,7 @@ See [docs/README-ryuki.md](docs/README-ryuki.md) for the requirements and the pa
 ```powershell
 copy victory.example.toml victory.toml      # then set your paths, outside this folder
 cargo build --locked --release -p victory
-scripts\play.ps1 -RX7900XT -Build release -Exe <path of your copy's executable>
+scripts\play.ps1 -Tuned -Build release -Exe <path of your copy's executable>
 ```
 
 Windows 10/11 x64, a CPU with AVX2, a Direct3D 12 GPU with shader model 6.6 and mesh shaders,

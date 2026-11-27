@@ -5,6 +5,16 @@ Each entry names the commit and, where there is one, a tag to go back to:
 (after saving anything newer elsewhere). Frame rates are medians of the log's
 frame lines in the world, diagnostics build, on the PC in the README.
 
+## `play.ps1 -Tuned` (2026-11-27)
+
+The measured settings are started with `-Tuned`, in place of `-RX7900XT`: most
+of them are about the 16-thread CPU and 32 GB of RAM, not the card. The old
+name still works (an alias of the same switch). Each start now prints one line
+with the preset and every setting it sets, so a log shows what a run had;
+`-List` prints that line and stops. `-Safe -Tuned` keeps one part per joined
+submission (`VICTORY_JOIN_PARTS`), as `-Safe` alone does. `-Tuned` without
+`-Safe` sets the same 41 settings as before.
+
 ## What the repository carries, checked (2026-11-26)
 
 Microsoft Defender (signatures of the day) finds nothing in the repository's
