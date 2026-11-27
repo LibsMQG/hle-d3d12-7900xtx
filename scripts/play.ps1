@@ -135,6 +135,17 @@ if ($Tuned) {
     # picture defect, memory as in other drives. (Measured on main 44718da0,
     # before ports 6 and SOFT_VIEWS were on in this preset.)
     $settings.VICTORY_SKIP_WC_BACK = '1'
+    # On a processor with two or more last-level caches of one size (a Ryzen
+    # with two core complexes), our own threads (submitting, relay, landing,
+    # list translators, ...) prefer the cores without processor 0, where the
+    # title pins its threads (adapted from motioncsgo's patch in
+    # avatarmanz/VIctory-7900XTX issue 399). In-run A/B on a Ryzen 9 5900X
+    # (jail, standing, 18 pairs of 20 s phases): frames -3.3% (median against
+    # the OFF neighbours), p90 -5.0%, lower in 17 of 18; the submitting
+    # thread's work 55.1 -> 53.0 ms a frame. Nothing changes on one complex,
+    # X3D or two kinds of cores. (Measured on main 1c479b29, before
+    # SKIP_WC_BACK was on in this preset.)
+    $settings.VICTORY_CCD = 'far'
 }
 foreach ($k in $More.Keys) { $settings[$k] = $More[$k] }
 
