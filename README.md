@@ -9,6 +9,9 @@ RDNA-to-DXIL shader recompiler. A fork of
 **RX 7900 XTX with 32 GB of RAM**.
 
 Maintained by **libs**: the ports, measurements, diagnostics and launcher presets of this fork.
+Developed as a **collaboration with eikkapine**
+([eikkapine/victory-amd](https://github.com/eikkapine/victory-amd)): the two trees share their
+work both ways, as one project on two machines. See [Collaboration](#collaboration).
 
 ## Results at a glance
 
@@ -49,6 +52,7 @@ checked by `cargo xtask policy` and by the pre-commit hook (`cargo xtask install
 
 Contents: [Results](#results-at-a-glance) · [PC](#the-pc-it-is-measured-on) ·
 [Milestones](#milestones) ·
+[Collaboration](#collaboration) ·
 [Where the code comes from](#where-the-code-comes-from) ·
 [Our own work](#our-own-work) ·
 [Known limits](#known-limits) ·
@@ -85,6 +89,25 @@ Moving fast through the world is still far slower (driving: median about 77 ms, 
 with everything in `-Tuned` on before `VICTORY_CCD=near`, which took another 14.8 % off the
 driving frames in its A/B): pipelines met for the first time and memory pressure, see
 [Known limits](#known-limits).
+
+## Collaboration
+
+This tree and [eikkapine/victory-amd](https://github.com/eikkapine/victory-amd) (by **eikkapine**,
+tuned on RDNA4) are developed together: each takes the other's work that measures better on its
+own machine. What comes into this tree from victory-amd, and where it stands (this table is
+updated with every commit that touches one of its rows):
+
+| Work from victory-amd | Status here |
+|---|---|
+| The title's frame rate (`VICTORY_TITLE_FPS`, the simulation's shortest step following `VICTORY_FPS`), `VICTORY_TIMER_LOG` | **Merged**: light frames (videos, loading, pause, map) at up to 60 fps by default, game time kept to the wall clock |
+| Resident waits skipped for upload and shared buffers (`VICTORY_BUFFER_SKIP_WAIT`), finer descriptor sync jobs (`VICTORY_SYNC_FINE`) | WIP: ported, in-run A/B pending |
+| Port 7 (`VICTORY_PORT_JOURNAL`), which victory-amd runs on | WIP: A/B again on this tree |
+| Driving: shorter pipeline waits (`VICTORY_PIPELINE_WAIT_MS`), same-memory remaps (`MAP_SAME`), texture queue order | Merge in progress |
+| Tree and vegetation flicker: in-place indirect draw arguments kept in order (`PORT_CONSTANTS_ORDER`) | Merge in progress |
+| Light without ray tracing: `AMBIENT_SETTLE`, `AMBIENT_REFLECT`, `LIGHT_PROBE` | Merge in progress |
+| Mouse and keyboard controls | Merge in progress |
+| FSR upscaling and frame generation (FidelityFX; needs AMD's libraries, not in this repository) | Merge in progress |
+| RAM caps (idle buffer copies, window copies, 32 GB watermarks) | Checked: nothing to free on this tree, not taken |
 
 ## Where the code comes from
 
@@ -279,8 +302,9 @@ authors.
   and Proudnoob4 (fxceless/victory-fork #868 and #1268) for `VICTORY_SKIP_WC_BACK`.
 - **motioncsgo**, for the thread placement on processors with two core complexes (`VICTORY_CCD`,
   from the patch in [avatarmanz/VIctory-7900XTX issue 399](https://github.com/avatarmanz/VIctory-7900XTX/issues/399)).
-- **[eikkapine/victory-amd](https://github.com/eikkapine/victory-amd)** by eikkapine, for the
-  title's frame-rate patch (`VICTORY_TITLE_FPS`, the simulation's shortest step) and `VICTORY_TIMER_LOG`.
+- **eikkapine** ([eikkapine/victory-amd](https://github.com/eikkapine/victory-amd)), collaborator
+  on this project: the title's frame-rate patch (`VICTORY_TITLE_FPS`, the simulation's shortest
+  step), `VICTORY_TIMER_LOG` and the work in [Collaboration](#collaboration).
 - **[VIctory](https://github.com/Marvisak/VIctory)** by Marvisak and its contributors.
 - **[WillyboPeep/victory-all-forks](https://github.com/WillyboPeep/victory-all-forks)**, a merge of
   community forks, where the fixes taken here were found, by AscilCH, C-GDev, David, DocBlack89,
