@@ -1634,9 +1634,19 @@ pub(crate) fn wide_each(n: usize, work: impl Fn(usize) + Send + Sync + 'static) 
     wide(jobs);
 }
 
-/// About this many bytes to a piece of work for [`wide`] (256 KiB so typical
-/// 1.5-2 MB per-submission snapshots and card-send batches fan out across all workers).
+/// About this many bytes to a piece of work for [`wide`]: 256 KiB, so the
+/// usual 1.5-2 MB of one submission's snapshots and card sends spread over
+/// all workers. `VICTORY_WIDE_SMALL=0`: [`WIDE_JOB_LARGE`], as before (with
+/// `VICTORY_AB` naming it, on and off while the title runs).
 const WIDE_JOB: usize = 256 << 10;
+
+/// [`WIDE_JOB`] before it was made smaller.
+const WIDE_JOB_LARGE: usize = 1 << 20;
+
+/// The bytes of a piece of work for [`wide`] now.
+fn wide_job() -> usize {
+    if crate::toggled!("VICTORY_WIDE_SMALL") { WIDE_JOB } else { WIDE_JOB_LARGE }
+}
 
 /// With [`wide_back`]: the snapshots noted while a submission is prepared
 /// (from, to, bytes), taken by [`take_snapshots`].
@@ -1656,6 +1666,7 @@ pub(crate) fn take_snapshots() {
 /// `copies` (from, to, bytes) as pieces of work of about [`WIDE_JOB`]
 /// bytes each: long ones cut, short ones together.
 fn copy_jobs(copies: Vec<(usize, usize, usize)>) -> Vec<Job> {
+    let job = wide_job();
     let mut jobs: Vec<Job> = Vec::new();
     let mut group: Vec<(usize, usize, usize)> = Vec::new();
     let mut bytes = 0;
@@ -1674,11 +1685,11 @@ fn copy_jobs(copies: Vec<(usize, usize, usize)>) -> Vec<Job> {
     for (src, dst, len) in copies {
         let mut at = 0;
         while at < len {
-            let n = (WIDE_JOB - bytes).min(len - at);
+            let n = (job - bytes).min(len - at);
             group.push((src + at, dst + at, n));
             at += n;
             bytes += n;
-            if bytes >= WIDE_JOB {
+            if bytes >= job {
                 flush(&mut group, &mut jobs);
                 bytes = 0;
             }
@@ -1720,6 +1731,7 @@ fn find_pieces(scans: Vec<(usize, usize, usize, usize, usize)>) -> Vec<Vec<(usiz
     type Found = Vec<(usize, usize, Vec<(usize, usize)>)>;
     // A job's part of a scan: the scan, then which and place.
     type Part = (usize, usize, usize, usize, usize, usize, usize);
+    let job = wide_job();
     let found: Arc<Mutex<Found>> = Arc::default();
     let mut jobs: Vec<Job> = Vec::new();
     let mut group: Vec<Part> = Vec::new();
@@ -1762,7 +1774,7 @@ fn find_pieces(scans: Vec<(usize, usize, usize, usize, usize)>) -> Vec<Vec<(usiz
         let (mut at, mut place) = (from, 0);
         while at < to {
             // Cut where pieces end, so that every job sees whole pieces.
-            let room = (WIDE_JOB - bytes).max(PIECE);
+            let room = (job - bytes).max(PIECE);
             let mut next = (at + room).min(to);
             if next < to {
                 next -= (start + next) % PIECE;
@@ -1774,7 +1786,7 @@ fn find_pieces(scans: Vec<(usize, usize, usize, usize, usize)>) -> Vec<Vec<(usiz
             bytes += next - at;
             place += 1;
             at = next;
-            if bytes >= WIDE_JOB {
+            if bytes >= job {
                 flush(&mut group, &mut jobs);
                 bytes = 0;
             }
@@ -2140,6 +2152,21 @@ fn dword_runs(at: usize, title: &[u8], merged: &[u8], gap: usize) -> Vec<(usize,
         }
     }
     runs
+}
+
+/// `VICTORY_TAKE_AVX2` (on unless 0; with `VICTORY_AB` naming it, on and off
+/// while the title runs): [`Shadow::take`] finds the changed runs with
+/// [`word_runs`] (AVX2 where whole words) instead of [`dword_runs`].
+fn take_avx2() -> bool {
+    crate::toggled!("VICTORY_TAKE_AVX2")
+}
+
+/// `VICTORY_PENDING_FLAG` (on unless 0; with `VICTORY_AB` naming it, on and
+/// off while the title runs): whether ranges shaders may be writing are
+/// looked for in a copy's atomic flag before the pending list's lock. Off:
+/// the lock is taken every time, as before (the flag is kept up either way).
+fn pending_flag() -> bool {
+    crate::toggled!("VICTORY_PENDING_FLAG")
 }
 
 /// [`dword_runs`] with no gap, the fast way where it can be: a frame compares
@@ -3602,13 +3629,17 @@ impl Shadow {
     /// Whether shaders of a submission not yet copied back may be writing
     /// the copy.
     pub(crate) fn writes_pending(&self) -> bool {
-        self.has_pending.load(Ordering::Acquire)
+        if pending_flag() {
+            self.has_pending.load(Ordering::Acquire)
+        } else {
+            !self.pending.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+        }
     }
 
     /// Whether one of those submissions may be writing in title memory
     /// `[from, to)`.
     pub(crate) fn writes_pending_in(&self, from: usize, to: usize) -> bool {
-        self.has_pending.load(Ordering::Acquire)
+        (!pending_flag() || self.has_pending.load(Ordering::Acquire))
             && self.pending.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|&(a, e)| a < to && e > from)
     }
 
@@ -3629,7 +3660,7 @@ impl Shadow {
         if from >= to {
             return false;
         }
-        if !self.has_pending.load(Ordering::Acquire) {
+        if pending_flag() && !self.has_pending.load(Ordering::Acquire) {
             return false;
         }
         let busy: Vec<(usize, usize)> = self
@@ -3676,7 +3707,7 @@ impl Shadow {
         if from >= to {
             return false;
         }
-        if !self.has_pending.load(Ordering::Acquire) {
+        if pending_flag() && !self.has_pending.load(Ordering::Acquire) {
             return false;
         }
         let busy: Vec<(usize, usize)> = self
@@ -3872,7 +3903,7 @@ impl Shadow {
         if from >= to {
             return 0;
         }
-        if self.has_pending.load(Ordering::Acquire) {
+        if !pending_flag() || self.has_pending.load(Ordering::Acquire) {
             let mut busy: Vec<(usize, usize)> = self
                 .pending
                 .lock()
@@ -3918,7 +3949,7 @@ impl Shadow {
             return false;
         }
         // Around ranges shaders are writing the refresh asks gap by gap.
-        if self.has_pending.load(Ordering::Acquire)
+        if (!pending_flag() || self.has_pending.load(Ordering::Acquire))
             && self.pending.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|&(a, e)| a < to && e > from)
         {
             return false;
@@ -4229,7 +4260,13 @@ impl Shadow {
                 // refresh lie apart.
                 let held = unsafe { std::slice::from_raw_parts_mut(self.data.add(at - start), n) };
                 let was = crate::host::upcheck::on().then(|| held.to_vec());
-                let runs = if whole { vec![(0, n)] } else { word_runs(at, held, title) };
+                let runs = if whole {
+                    vec![(0, n)]
+                } else if take_avx2() {
+                    word_runs(at, held, title)
+                } else {
+                    dword_runs(at, held, title, 0)
+                };
                 for &(a, len) in &runs {
                     held[a..a + len].copy_from_slice(&title[a..a + len]);
                     self.changed(at - start + a, at - start + a + len);
