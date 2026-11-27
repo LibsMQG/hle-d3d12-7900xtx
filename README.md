@@ -100,8 +100,8 @@ updated with every commit that touches one of its rows):
 | Work from victory-amd | Status here |
 |---|---|
 | The title's frame rate (`VICTORY_TITLE_FPS`, the simulation's shortest step following `VICTORY_FPS`), `VICTORY_TIMER_LOG` | **Merged**: light frames (videos, loading, pause, map) at up to 60 fps by default, game time kept to the wall clock |
-| Resident waits skipped for upload and shared buffers (`VICTORY_BUFFER_SKIP_WAIT`), finer descriptor sync jobs (`VICTORY_SYNC_FINE`) | WIP: ported, in-run A/B pending |
-| Port 7 (`VICTORY_PORT_JOURNAL`), which victory-amd runs on | WIP: A/B again on this tree |
+| Resident waits skipped for upload and shared buffers (`VICTORY_BUFFER_SKIP_WAIT`), finer descriptor sync jobs (`VICTORY_SYNC_FINE`) | Measured, not taken: in-run A/B standing (25 phases of 20 s, both switches in turn), frames -1.4% and -1.6% (median against the neighbours with the switch off), inside the noise. The resident waits are 2.5 ms a frame, none of it on the submitting thread, and they keep new memory from being read before it is mapped (the device losses of 2026-11-25). The finer sync jobs cut the heap rounds 17.6 -> 16.5 ms: to be measured again where those rounds weigh more (the city) |
+| Port 7 (`VICTORY_PORT_JOURNAL`), which victory-amd runs on | Measured again, not taken: in-run A/B standing (20 phases of 20 s), the submitting thread's work 43.1 -> 39.0 ms a frame and its wait for the heap rounds 6.2 -> 1.8 ms, frames unchanged (median +0.0%): standing, the submitting thread no longer sets the frame here. Stays off |
 | Driving: shorter pipeline waits (`VICTORY_PIPELINE_WAIT_MS`), same-memory remaps (`MAP_SAME`), texture queue order | Merge in progress |
 | Tree and vegetation flicker: in-place indirect draw arguments kept in order (`PORT_CONSTANTS_ORDER`) | Merge in progress |
 | Light without ray tracing: `AMBIENT_SETTLE`, `AMBIENT_REFLECT`, `LIGHT_PROBE` | Merge in progress |
