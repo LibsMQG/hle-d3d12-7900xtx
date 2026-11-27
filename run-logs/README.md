@@ -39,7 +39,7 @@ Thinning leaves fewer samples per window, so medians can differ a little from th
 | `port2/` | `2026-11-27T0257Z-port2-trace.txt` | The same with the hardware-breakpoint writer tracer. |
 | `driving/` | `2026-11-27T0653Z-drive-soft-off.txt` | A drive with `VICTORY_SOFT_VIEWS=off`: remapping-led long frames. |
 | `driving/` | `2026-11-27T0702Z-drive-soft-copies.txt` | The same drive with `VICTORY_SOFT_VIEWS=copies`: long frames are mostly pipeline waits. |
-| `driving/` | `2026-11-27T1233Z-drive-ccd-near-ab.txt` | The newest drive with today's `-Tuned`; in-run A/B of `VICTORY_CCD` near against far. |
+| `driving/` | `2026-11-27T1233Z-drive-ccd-near-ab.txt` | The newest drive with today's `-Tuned`; in-run A/B of `VICTORY_CCD` near against far. The `textures picked by index, the queue` lines (in all three drives) show the texture queue falling behind. |
 | `memory/` | `2026-11-27T0716Z-memory-drive.txt` | Standing in a house, then about 3 minutes of driving: commit, card memory and texture copies grow. |
 | `memory/` | `2026-11-27T0813Z-memory-idle-growth.txt` | Ten minutes in the open world with nobody at the controls: the same growth, no plateau. |
 | `capture/` | `2026-11-27T1137Z-capture-watchdog.txt` | A frame capture (`VICTORY_RECORD`) that stalls the frame until the title's watchdog stops it; our crash report at the end. |
