@@ -205,6 +205,9 @@ pub unsafe fn install(base: usize) {
     // (F19) `VICTORY_CHUNK_METER` / `VICTORY_CHUNK_COUNT`.
     // SAFETY: the caller's promise.
     unsafe { crate::chunkmeter::install(base) };
+    // (`VICTORY_FPS`) The title's own frame limiter, in light frames.
+    // SAFETY: the caller's promise.
+    unsafe { crate::fpslimit::install(base) };
     // (F5: `VICTORY_STREAM_ISSUE_WAIT_FRAMES` / `_FREE_WAIT_FRAMES` not
     // ported: measured and rejected, the waits stay 2 frames.)
     BASE.store(base as u64, Ordering::Relaxed);

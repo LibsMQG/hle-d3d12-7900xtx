@@ -131,6 +131,19 @@ fn light() -> Option<Duration> {
     }
 }
 
+/// Whether `VICTORY_FPS` asks for our pacing of light frames (the title's
+/// own frame limiter is then let through in them: `victory_hle`'s
+/// `fpslimit`).
+pub fn fps_asked() -> bool {
+    rate() != Rate::Title
+}
+
+/// Whether light frames run now (`VICTORY_FPS`, the last `LIGHT_AFTER`
+/// frames light).
+pub fn light_frames() -> bool {
+    light().is_some()
+}
+
 /// Whether the last frame wait was a light frame's.
 static WAS_LIGHT: AtomicBool = AtomicBool::new(false);
 /// Changes between light frames and the title's ticks.

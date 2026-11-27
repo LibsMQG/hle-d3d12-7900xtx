@@ -17,6 +17,8 @@ mod host;
 pub mod readback;
 #[cfg(windows)]
 pub mod chunkmeter;
+#[cfg(windows)]
+pub mod fpslimit;
 mod image_watch;
 #[cfg(all(windows, feature = "diagnostics"))]
 pub use victory_gpu::frame_phase;

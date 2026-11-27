@@ -208,7 +208,7 @@ pub fn run(
     }));
     // (Fox port A) The title-code hooks of `VICTORY_READBACK_SET`,
     // `VICTORY_READBACK_LOCKS`, `VICTORY_STREAM_METER`, `VICTORY_CHUNK_METER`,
-    // `VICTORY_CHUNK_COUNT` (all off unless asked for).
+    // `VICTORY_CHUNK_COUNT`, `VICTORY_FPS` (all off unless asked for).
     // SAFETY: the mapped title image, none of whose code has run yet.
     #[cfg(windows)]
     unsafe { victory_hle::readback::install(image.base()) };
