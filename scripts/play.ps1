@@ -5,8 +5,8 @@
 # -Build        target\diag (the default, the build all measurements are of) or target\release
 # -Tuned        also the settings measured best here (RX 7900 XT, 8-core/16-thread CPU, 32 GB of RAM;
 #               docs/rx7900xt.md); -RX7900XT is the same switch under its old name
-# -SkipMovies   skips the opening movies (off by default): open (none opens), end (each jumps to
-#               its last frame), fast (decoded without waiting); VICTORY_SKIP_MOVIES
+# -SkipMovies   skips the opening movies (off by default): once (logos and intros), all (looping
+#               menu backgrounds too, which then stay dark); VICTORY_SKIP_BINK
 # -List         only print the settings this line would start with, and stop
 # -More         other settings: -More @{VICTORY_PANEL='1'}
 # Run it from a normal window, not as administrator: the driver then keeps its shader cache elsewhere.
@@ -16,7 +16,7 @@ param(
     [switch]$RayTracing,
     [Alias('RX7900XT')][switch]$Tuned,
     [switch]$List,
-    [ValidateSet('open', 'end', 'fast')][string]$SkipMovies = '',
+    [ValidateSet('once', 'all')][string]$SkipMovies = '',
     [ValidateSet('diag', 'release')][string]$Build = 'diag',
     [hashtable]$More = @{}
 )
@@ -35,7 +35,7 @@ if ($Safe) {
     $settings.VICTORY_THIN = '1'; $settings.VICTORY_JOIN_PARTS = '8'; $settings.VICTORY_UPLOAD_AHEAD = '1'
 }
 if ($RayTracing) { $settings.VICTORY_BVH_BUILDER = '1' }
-if ($SkipMovies) { $settings.VICTORY_SKIP_MOVIES = $SkipMovies }
+if ($SkipMovies) { $settings.VICTORY_SKIP_BINK = $(if ($SkipMovies -eq 'all') { 'all' } else { '1' }) }
 if ($Tuned) {
     # Shader-write compares on the card for buffers of 1 MiB and more; less committed
     # memory in windows of title memory (about 5 GB less); smaller texture steps at scene
