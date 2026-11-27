@@ -186,6 +186,38 @@ pub fn run(
         println!("renderer port 2: {patched} of {} descriptor record stores of the title patched", SITES.len());
         victory_hle::port_descriptors::hooked(image.base(), size, patched);
     }
+    // The title's frame rate (victory_loader's frame_rate, from the
+    // victory-amd fork; off without the switches): VICTORY_TITLE_FPS gives
+    // the whole title another rate, and the shortest step of its simulation
+    // follows it, or VICTORY_FPS's (our light frames) when that is faster.
+    #[cfg(windows)]
+    if execute {
+        use victory_loader::frame_rate::{
+            Patched, apply, load_sites, step_rate, step_sites, title_fps_asked, title_interval_us,
+        };
+        let size = image.info().size_of_image as usize;
+        let title = title_fps_asked();
+        if let Some(rate) = title {
+            // SAFETY: the image stays mapped and nothing of it has run yet.
+            let done = unsafe { apply(image.base(), size, rate, load_sites()) };
+            let patched = done.iter().filter(|d| **d == Patched::Done).count();
+            println!(
+                "frame rate: the title's rate {rate} ({patched} of {} reads of its setting patched; it asks for {} us at 60 Hz)",
+                load_sites().len(),
+                title_interval_us(rate, false)
+            );
+        }
+        if let Some(step) = step_rate(title, victory_hle::fpslimit::light_fps()) {
+            // SAFETY: as above.
+            let done = unsafe { apply(image.base(), size, step, step_sites()) };
+            let patched = done.iter().all(|d| *d == Patched::Done);
+            println!(
+                "frame rate: the simulation's shortest step 1/{} s ({})",
+                if step == 0 { 1000 } else { step },
+                if patched { "patched" } else { "NOT patched: see the log" }
+            );
+        }
+    }
     if !execute {
         println!("not executing (pass --execute to start the title)");
         return Ok(());
@@ -245,6 +277,7 @@ fn diagnostics(image: &victory_loader::LoadedImage, cfg: &victory_core::Config) 
     victory_hle::modules::audio::capture::start();
     watch(image.base(), image.info().size_of_image as usize);
     poke(image.base(), image.info().size_of_image as usize);
+    timers(image.base(), image.info().size_of_image as usize);
     // Debugging aid: `VICTORY_CRASH_SAVE=<rva>:<len>,...` (hex) writes those
     // title ranges to `crash-<rva>.bin` in the cache dir on a crash.
     let size = image.info().size_of_image as usize;
@@ -262,6 +295,47 @@ fn diagnostics(image: &victory_loader::LoadedImage, cfg: &victory_core::Config) 
             })
             .collect(),
     );
+}
+
+/// Debugging aid: `VICTORY_TIMER_LOG=1` logs the title's timers once a
+/// second (`victory_loader::frame_rate`, from the victory-amd fork): its
+/// frame time and limiter byte, and each timer's two times, step in seconds
+/// and in milliseconds. Whether game time keeps to the wall clock at any
+/// frame rate is read from these.
+#[cfg(all(windows, feature = "diagnostics"))]
+fn timers(base: usize, size: usize) {
+    use victory_loader::frame_rate::{FRAME_US, LIMITER_ON, TIMERS};
+    if std::env::var("VICTORY_TIMER_LOG").ok().as_deref() != Some("1") {
+        return;
+    }
+    if TIMERS.iter().chain([&FRAME_US, &LIMITER_ON]).any(|&rva| rva + 0x14 > size) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let start = std::time::Instant::now();
+        let u32_at = |rva: usize| {
+            // SAFETY: inside the mapped image (checked above), title data.
+            unsafe { ((base + rva) as *const u32).read_volatile() }
+        };
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let timers: Vec<String> = TIMERS
+                .iter()
+                .map(|&t| {
+                    let step = f32::from_bits(u32_at(t + 0xc));
+                    format!("{} {} {step:.4} {}", u32_at(t), u32_at(t + 4), u32_at(t + 0x10))
+                })
+                .collect();
+            eprintln!(
+                "VIctory: the title's timers at {} ms: frame_us {} limiter {} frames {}; timers (time ms, frames, step s, step ms): {}",
+                start.elapsed().as_millis(),
+                u32_at(FRAME_US),
+                u32_at(LIMITER_ON) & 0xff,
+                victory_hle::fpslimit::frames_begun(),
+                timers.join(" | ")
+            );
+        }
+    });
 }
 
 /// Debugging aid: `VICTORY_WATCH=<rva>,...` (hex) logs the u32 at each

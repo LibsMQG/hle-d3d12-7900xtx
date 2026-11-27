@@ -96,6 +96,17 @@ unsafe extern "C" fn limiter_returned(_rax: u64, slot: *mut u64) {
     }
 }
 
+/// `VICTORY_FPS`'s rate (`victory_gpu::frame::light_fps`), for the loader's
+/// patch of the simulation's shortest step.
+pub fn light_fps() -> Option<u32> {
+    victory_gpu::frame::light_fps()
+}
+
+/// Frames begun so far (for `VICTORY_TIMER_LOG`).
+pub fn frames_begun() -> u64 {
+    victory_gpu::frame::current()
+}
+
 /// The limiter's read of its byte: `mov bl, byte ptr [rip+disp32]`.
 fn reads_byte() -> [u8; 6] {
     let disp = (BYTE as i64 - (READS_BYTE + 6) as i64) as i32;

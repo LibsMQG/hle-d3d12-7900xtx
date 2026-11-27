@@ -10,13 +10,15 @@
 //! the clock to presentation if a title paces by them.
 //!
 //! `VICTORY_FPS=N` (a test switch, off by default): light frames, those after
-//! 8 frames in a row of at most `VICTORY_FPS_DRAWS` draws each (100; `all`:
-//! every frame), such as the title's videos and loading screens, are only
-//! held to at least 1/N s each, with no rounding to the title's ticks (a
-//! frame of 20 ms shows at 50 a second, not 30); `VICTORY_FPS=0` does not
-//! hold them. The first frame with more draws is back on the title's
-//! interval, and the world's frames stay there. A title that steps what it
-//! shows by the interval it set runs that much faster in light frames.
+//! 8 frames in a row of at most `VICTORY_FPS_DRAWS` draws each (500; `all`:
+//! every frame), such as the title's videos, loading screens, pause menu and
+//! map, are only held to at least 1/N s each, with no rounding to the
+//! title's ticks (a frame of 20 ms shows at 50 a second, not 30);
+//! `VICTORY_FPS=0` does not hold them. The first frame with more draws is
+//! back on the title's interval, and the world's frames stay there. The
+//! title's own limiter is let through in light frames (`victory_hle`'s
+//! `fpslimit`), and its simulation's shortest step follows N
+//! (`victory_loader`'s `frame_rate`), so game time keeps to the wall clock.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -59,9 +61,10 @@ enum Rate {
 }
 
 /// Light frames: those after a frame of at most this many draws (the
-/// title's videos and loading screens drew 3 to 19 a frame, its world and
-/// the menus over it thousands).
-const LIGHT_DRAWS: u32 = 100;
+/// title's videos and loading screens drew 3 to 19 a frame, its pause menu
+/// 68 to 83, its map 245 to 290; its world 6,000 and more, the settings
+/// menu over it too).
+const LIGHT_DRAWS: u32 = 500;
 
 fn rate_from(fps: Option<&str>, draws: Option<&str>) -> Rate {
     let least = match fps.map(str::trim).map(str::parse::<u32>) {
@@ -142,6 +145,24 @@ pub fn fps_asked() -> bool {
 /// frames light).
 pub fn light_frames() -> bool {
     light().is_some()
+}
+
+/// `VICTORY_FPS`'s rate: at most this many light frames a second (0: no
+/// limit); `None` when unset.
+pub fn light_fps() -> Option<u32> {
+    match rate() {
+        Rate::Title => None,
+        Rate::Light { least, .. } => Some(fps_of(least)),
+    }
+}
+
+/// Frames a second of a least frame time (0 for none).
+fn fps_of(least: Duration) -> u32 {
+    if least.is_zero() {
+        0
+    } else {
+        (1e9 / least.as_nanos() as f64).round() as u32
+    }
 }
 
 /// Whether the last frame wait was a light frame's.
@@ -443,6 +464,13 @@ mod tests {
             rate_from(Some("30"), Some("many")),
             light(Duration::from_nanos(33_333_333), LIGHT_DRAWS)
         );
+        // And back to the rate given, for the simulation's shortest step.
+        for fps in [0, 30, 60, 120, 144, 240] {
+            let Rate::Light { least, .. } = rate_from(Some(&fps.to_string()), None) else {
+                panic!("{fps}: not light");
+            };
+            assert_eq!(fps_of(least), fps);
+        }
     }
 
     #[test]
