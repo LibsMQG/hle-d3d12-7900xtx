@@ -795,7 +795,9 @@ pub(crate) fn line(frames: f64) {
             "renderer port 2's missed view records sorted (VICTORY_PORT_DESCRIPTORS_SORT=1) per frame: {:.1}; by kind: {:.1} entries of the views' table, \
              {:.1} constant buffer views, {:.1} views of placed memory, {:.1} other; a slot told this frame or the one before in their 32 slots {:.1}, \
              only in their 1024 slots {:.1}, in neither {:.1}; the same bytes as a record told this frame {:.1}, the frame before {:.1}, neither {:.1}; \
-             on a 4 KiB part the write watch said was written {:.1}, on one it did not {:.1}, not known (the watch said the whole page) {:.1}; \n             now a live view of the table or of placed memory with its tag, index or generation changed {:.1}, a constant buffer view so changed {:.1}, \n             a view whose tag, index and generation are as last seen {:.1}, no live view (a tag left over other data) {:.1}",
+             on a 4 KiB part the write watch said was written {:.1}, on one it did not {:.1}, not known (the watch said the whole page) {:.1}; \
+             now a live view of the table or of placed memory with its tag, index or generation changed {:.1}, a constant buffer view so changed {:.1}, \
+             a view whose tag, index and generation are as last seen {:.1}, no live view (a tag left over other data) {:.1}",
             s[0],
             s[1],
             s[2],
