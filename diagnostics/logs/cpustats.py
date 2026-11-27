@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Sums the VICTORY_CPU_STATS lines of a log over its last reports, weighted by
 frames, and the frame lines of the same stretch. Read only.
 Usage: python -I tools/cpustats.py <log> [last reports, default 8]"""

@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Timeline trace: for lock waits at a given place, the objects (lock addresses) waited on: how many distinct,
 their span, the busiest ones, and per thread kind. Read only.
 Usage: python -I wait_objects.py <trace.json> <substring of 'at'> [...]"""

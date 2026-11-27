@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """memread: reads victory.exe's memory from outside, while it runs. No rebuild, no
 change to the game: only VirtualQueryEx / QueryWorkingSetEx / GetMappedFileName /
 GetPerformanceInfo on the process, at below-normal priority.

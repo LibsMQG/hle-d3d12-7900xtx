@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """For chosen threads of a sampler CSV: where each sample's wall time goes.
 Every sample counts the same (a share of the thread's wall time), whether the
 thread was on a core or blocked. For each, the leaf function and the nearest

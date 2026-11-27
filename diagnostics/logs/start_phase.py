@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Start of a run: from the first frame line with >1000 draws, how long until frames settle (median of 5 lines < 130 ms),
 and the texture MB uploaded meanwhile. Read only.
 Usage: python -I start_phase.py <log> [<log>...]"""

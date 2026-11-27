@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """The game's memory over time, minute by minute, from counters.ps1 CSVs.
 The CSVs hold some decimals with a comma (locales with a decimal comma), so the columns after
 commit_total_mb are read from the end of the line. Read only.

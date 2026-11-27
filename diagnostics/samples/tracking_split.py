@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Read only: in a sampler CSV, the samples whose leaf is page tracking (GetWriteWatch, VirtualProtect, VirtualQuery,
 the exception handler), per thread and per chain of our frames. Usage: python -I tracking_split.py <csv>"""
 import collections

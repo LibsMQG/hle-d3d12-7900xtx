@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Per-stats-block table of a VIctory run log: python frames.py <log> [last_n]"""
 import re, sys, statistics as s
 t = re.sub(r'\x1b\[[0-9;]*m', '', open(sys.argv[1], encoding="utf-8", errors="replace").read())

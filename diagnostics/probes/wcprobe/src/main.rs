@@ -1,3 +1,4 @@
+// Author: libs (hle-d3d12-7900xtx)
 //! wcprobe: which D3D12 objects make the driver hold write-combined memory.
 //!
 //! No game. One device on the default adapter; each phase makes one kind of

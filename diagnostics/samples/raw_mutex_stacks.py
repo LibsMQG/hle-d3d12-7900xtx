@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Raw stacks of wait samples whose stack has `needle_lock` then `needle_fn`, for some threads. Read only.
 Usage: python -I raw_mutex_stacks.py <csv> <needle_lock> <needle_fn> <n> <tid> [tid...]"""
 import collections

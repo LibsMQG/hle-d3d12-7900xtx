@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Compare two VIctory run logs, same scene: python -I ab_logs.py <A.log> <B.log> [--last N] [--min-draws N]
 Uses each log's last N steady blocks (default 14, about 70 s) with at least --min-draws draws a frame and under
 400 ms/frame. Read only."""

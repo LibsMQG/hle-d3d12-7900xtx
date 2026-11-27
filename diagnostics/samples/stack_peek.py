@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Print a few raw stacks of a thread's lock-wait samples from a sampler CSV. Read only.
 Usage: python -I stack_peek.py <csv> <tid> [n]"""
 import collections

@@ -8,6 +8,8 @@ RDNA-to-DXIL shader recompiler. A fork of
 [VIctory](https://github.com/Marvisak/VIctory). Developed and measured on an
 **RX 7900 XTX with 32 GB of RAM**.
 
+Maintained by **libs**: the ports, measurements, diagnostics and launcher presets of this fork.
+
 ## Results at a glance
 
 This fork (`main` at `1ef9e07`, `play.ps1 -Tuned`) against the RYUKI base it started from
@@ -114,7 +116,7 @@ Paradoxo321/rodrion-vi, LooperSalty's fork and others.
 
 ## Our own work
 
-What this fork wrote itself, not taken from another tree.
+What this fork (libs) wrote itself, not taken from another tree.
 
 ### Diagnostics
 
@@ -191,6 +193,8 @@ Rust (the toolchain is pinned) and the MSVC build tools.
 A tree of other people's work. The history is kept, and commits taken from elsewhere keep their
 authors.
 
+- **libs**: this fork: everything under [Our own work](#our-own-work), the ports from the forks
+  below, the tools in [diagnostics/](diagnostics/README.md) and [scripts/play.ps1](scripts/play.ps1).
 - **[YukiRyuu/RYUKI-7900XT](https://github.com/YukiRyuu/RYUKI-7900XT)** by ryuki: the base of this
   fork, its 32 GB work and the forks it carries (its full list is in
   [docs/README-ryuki.md](docs/README-ryuki.md): avatarmanz, fxceless, DexNom, Belobug, FQY55kai,

@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Micro-benchmark, own process only: cost of GetWriteWatch (succeeding on a write-watched reservation, failing on
 plain memory) and of VirtualProtect per 64 KiB block vs one call for a run of blocks. Allocates ~350 MB, frees it.
 Python call overhead (~0.3-1 us) is included in every number."""

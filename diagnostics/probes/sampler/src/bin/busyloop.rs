@@ -1,3 +1,4 @@
+// Author: libs (hle-d3d12-7900xtx)
 //! Harmless test target for `sampler`: a few named threads with known hot spots.
 //! Usage: busyloop [seconds]   (default 15; exits by itself)
 use std::hint::black_box;

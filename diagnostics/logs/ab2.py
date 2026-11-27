@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """VICTORY_AB run with two switches (bit 0 and bit 1): phase medians per combination, each phase with a
 switch on against the mean of its nearest neighbours with that switch off and the other one the same,
 and the counters of the lines logged inside each phase (5 s or more after its start), per combination.

@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Print chosen sections of VIctory timeline summaries (.txt), first N lines each. Read only.
 Usage: python -I tl_sections.py <n> <file.txt> [...]"""
 import sys

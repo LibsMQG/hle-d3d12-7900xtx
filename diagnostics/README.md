@@ -1,6 +1,9 @@
 # Diagnostics
 
 Tools that measure the host and read what the runtime's counters write. They never change the runtime.
+
+All tools in this folder are written by **libs**.
+
 Every script is read only and takes its files as arguments: nothing here knows where your logs, cache or
 game are. Run Python scripts with `python -I <script> ...` (Python 3.8 or newer, standard library only);
 each one's first lines say its arguments.

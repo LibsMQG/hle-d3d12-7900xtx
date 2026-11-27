@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Read the card's sensors through AMD's own library (read only): python -I clocks.py [seconds] [step] [out.csv]"""
 import ctypes as C
 import sys

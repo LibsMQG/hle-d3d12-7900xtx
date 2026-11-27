@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Timeline trace: what lies inside the spans named <name> on one thread: nested spans by name, waits by place,
 kernel calls, and the time covered by none of them; per frame of the trace's frames. Read only.
 Usage: python -I inside_spans.py <trace.json> <thread name> <span name> [<span name>...]"""

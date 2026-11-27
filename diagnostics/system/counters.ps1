@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 # Collects system and process counters for victory.exe every $Every seconds into a CSV (and a thread CSV).
 # Usage: powershell -ExecutionPolicy Bypass -File counters.ps1 -Seconds 300 -Out <dir>
 param([int]$Seconds = 300, [int]$Every = 2, [string]$Out = "$PWD\counters")

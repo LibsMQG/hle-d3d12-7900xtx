@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Timeline trace: each wait of the submitting thread for the heaps' records, and what the heap-sync thread
 (and the records threads) did meanwhile. Read only.
 Usage: python -I heap_waits.py <trace.json> [max waits shown]"""

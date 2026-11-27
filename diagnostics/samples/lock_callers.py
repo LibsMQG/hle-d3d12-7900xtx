@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Group a thread's samples by the first frames of ours above the leaf. Read only.
 Stacks in the sampler CSV are one field, frames joined by ' <- ' (leaf first).
 Usage: python -I lock_callers.py <csv> <tid> [only-waits 0/1] [frames 2]"""

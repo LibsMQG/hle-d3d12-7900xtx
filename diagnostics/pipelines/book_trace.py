@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Read-only: the pipelines of the book holding a shader whose container names include <name substring>
 (or whose shader hashes are given), with the 16-digit hash, the matching names and whether runs drew with them.
 Usage: python -I book_trace.py <pipelines dir> <name substring> [hash16...]"""

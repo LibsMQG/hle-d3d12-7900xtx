@@ -21,7 +21,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[derive(Parser)]
 #[command(
     name = "victory",
-    version,
+    version = concat!(env!("CARGO_PKG_VERSION"), " (hle-d3d12-7900xtx by libs)"),
+    author = "libs",
     about = "Run a console title's x64 executable natively on Windows"
 )]
 struct Cli {

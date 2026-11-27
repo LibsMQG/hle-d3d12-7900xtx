@@ -1,3 +1,4 @@
+# Author: libs (hle-d3d12-7900xtx)
 """Means per UTC window of the ASYNC_SUBMIT line ('submissions prepared by a thread of ours') and the frame lines. Read only.
 Usage: python -I line_stats.py <log> <name=HH:MM:SS-HH:MM:SS> [...]"""
 import re
