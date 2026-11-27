@@ -62,6 +62,11 @@ if ($RX7900XT) {
     # changes the translation: the first run after it starts from a cold
     # shader cache (`victory shaders`, then `victory warm --used --jobs 4`).
     $settings.VICTORY_PORT_CONSTANTS = '1'; $settings.VICTORY_PORT_CBV = '1'
+    # Port 1 also for title buffers above 4 GiB that lie in one stretch of a
+    # section (about 80 small ones, 15 MB): the submitting thread's snapshots
+    # 4.5 -> 2.6 ms a frame and 10 MB a frame less compared on the CPU (jail,
+    # standing, four runs: two with, two without).
+    $settings.VICTORY_PORT_BUFFERS = '1'
 }
 foreach ($k in $More.Keys) { $settings[$k] = $More[$k] }
 
