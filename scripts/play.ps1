@@ -67,6 +67,16 @@ if ($RX7900XT) {
     # 4.5 -> 2.6 ms a frame and 10 MB a frame less compared on the CPU (jail,
     # standing, four runs: two with, two without).
     $settings.VICTORY_PORT_BUFFERS = '1'
+    # Renderer port 2: the title's six descriptor record stores tell which slots
+    # of its view heap they wrote, in place of asking the write watch for the
+    # whole heap every round (a fallback looks at 16 of its written pages a frame).
+    # In-run A/B (jail, standing, 15 phases of 20 s): the heaps' records 27.9 ->
+    # 19.3 ms a frame, the submitting thread worked 55.2 -> 50.9 ms, frames 1.5%
+    # less (ON below its OFF neighbours in 6 of 7). Of the records the fallback
+    # finds untold, 98% name the view they named before; about 6 a frame are new
+    # views, which no write of the CPU to the heap's addresses makes (a writer
+    # trace caught only the six stores). No picture defect standing or walking.
+    $settings.VICTORY_PORT_DESCRIPTORS = '1'
 }
 foreach ($k in $More.Keys) { $settings[$k] = $More[$k] }
 
