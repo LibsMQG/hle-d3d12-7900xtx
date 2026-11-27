@@ -16,36 +16,37 @@ work both ways, as one project on two machines. See [Collaboration](#collaborati
 
 ## Results at a glance
 
-This fork (`main` at `1ef9e07`, `play.ps1 -Tuned`) against the RYUKI base it started from
-(its own tuned settings), same PC, same fixed test spot standing still, diagnostics builds,
-no errors in the log, picture complete in both. Both at the title's own output resolution (no
-upscaler or render scale of ours), no frame generation, ray-traced light off (see
+This fork (`main` at `48e6467` with renderer port 7 on, `play.ps1 -RX7900XTX`) against the RYUKI
+base it started from (its own tuned settings), same PC, same fixed test spot standing still,
+diagnostics builds, no errors in the log, picture complete in both. Both at the title's own output
+resolution (no upscaler or render scale of ours), no frame generation, ray-traced light off (see
 [Known limits](#known-limits)).
 
 | | RYUKI base | This fork | Gain |
 |---|---|---|---|
-| Frame time (median) | 78.8 ms (p90 87.7) | **64.7 ms** (p90 68.1) | **-18 %** |
-| Frame rate | 12.7 fps | **15.5 fps** | **+22 %** |
-| CPU: submitting thread's work per frame | 75.5 ms | **48.1 ms** | **-36 %** |
-| CPU: title waiting at presents | 28.1 ms | 19.5 ms | -31 % |
-| GPU board power (median) | 273 W | **199 W** | **-74 W** |
-| GPU activity / graphics clock | 100 % / 3.08 GHz | 70 % / 1.99 GHz | same work, less effort |
-| Write-combined memory committed | 13.7 GB | 12.9 GB | -0.8 GB |
-| Process RAM: working set / private | 10.8 / 27.5 GB | 11.2 / 26.7 GB | about the same |
-| VRAM in use | 11.0 GB | 11.2 GB | about the same |
+| Frame time (median) | 78.8 ms (p90 87.7) | **50.0 ms** (p90 51.9) | **-37 %** |
+| Frame rate | 12.7 fps | **20.0 fps** | **+57 %** |
+| CPU: submitting thread's work per frame | 75.5 ms | **41.0 ms** | **-46 %** |
+| CPU: title waiting at presents | 28.1 ms | 8.1 ms | -71 % |
+| GPU board power (median) | 273 W | **233 W** | **-40 W** |
+| GPU activity / graphics clock | 100 % / 3.08 GHz | 79 % / 2.33 GHz | more frames, less effort |
+| Write-combined memory committed | 13.7 GB | 13.8 GB | about the same |
+| Process RAM: working set / private | 10.8 / 27.5 GB | 11.0 / 27.3 GB | about the same |
+| VRAM in use | 11.0 GB | 12.1 GB | +1.1 GB |
 
 The frame is limited by the CPU thread that turns the title's command lists into Direct3D 12
 work, not by the GPU: most of the gain is that thread doing less. Power, activity and clock come
 from the card's sensors (4 samples a second); the base also keeps the card's clocks up on
-purpose, which is part of the power difference. One run per side (40-60 s): the same build
+purpose, which is part of the power difference. One run per side (60-67 s): the same build
 varies by about 15 ms from run to run.
 
-Since then (not yet measured side by side with the base): `VICTORY_SKIP_WC_BACK` took the
-standing frame from 70.1 to **54.4 ms** (mean, in-run A/B on `3430ee0`, faster in 12 of 12
-pairs) and the submitting thread's work from 55.2 to **35.8 ms**; `VICTORY_CCD` (our threads
-placed by core complex) another -3.3 % (far), and its `near` mode -1.5 % more standing and
--14.8 % driving. See [Milestones](#milestones). Redacted excerpts of the logs behind these
-numbers are in [run-logs/](run-logs/).
+Since the column before this one (64.7 ms on `1ef9e07`): `VICTORY_SKIP_WC_BACK` (-22.9 % in an
+in-run A/B), `VICTORY_CCD` (our threads placed by core complex: far -3.3 %, near another -1.5 %
+standing and -14.8 % driving), eight list translators (-0.8 % and -3.4 %) and renderer port 7
+(-6.2 %). Standing here the frames still come short and long by turns (about 36 and 60 ms): in
+the long ones the submitting thread copies about 25 MB of title memory, in the short ones 2-7 MB.
+See [Milestones](#milestones). Redacted excerpts of the logs behind these numbers are in
+[run-logs/](run-logs/).
 
 **This repository contains no game files, code or assets.** You need your own copy of the
 software you run with it. The asset policy ([docs/asset-policy.md](docs/asset-policy.md)) is
@@ -81,10 +82,11 @@ title's own output resolution, no frame generation, ray-traced light off.
 | 2026-11-26 | Rebased on the RYUKI tree, with this fork's fixes and diagnostics on top: 73 ms (13.6 fps), picture complete once the pipeline cache is built, no errors in the log. |
 | 2026-11-27 | Renderer ports 1 and 5, then the RDNA3 fork's submit-thread changes and buffers in place: about 70 ms; the submitting thread's work went from ~77 to ~57 ms a frame. |
 | 2026-11-27 | Renderer port 2 (descriptor stores tell their slots): **about 68 ms (14.7 fps)**, submitting thread ~51 ms; no picture defects standing, walking or moving fast. |
-| 2026-11-27 | Descriptor records compared in place, dynamic bits, prelude pool: **64.7 ms (15.5 fps)**, submitting thread 48 ms, GPU at 199 W instead of the base's 273 W ([Results at a glance](#results-at-a-glance)). |
+| 2026-11-27 | Descriptor records compared in place, dynamic bits, prelude pool: **64.7 ms (15.5 fps)**, submitting thread 48 ms, GPU at 199 W instead of the base's 273 W (the first side-by-side measure; [run-logs](run-logs/)). |
 | 2026-11-27 | Renderer port 6 on (guards' lock waits 26.4 -> 4.0 ms a frame, frames -2.6 %); `VICTORY_SOFT_VIEWS=copies` (driving: slow frames about halved, p99 457 -> 271 ms). |
 | 2026-11-27 | Write-combined memory of 1 MiB and over kept on the card (`VICTORY_SKIP_WC_BACK`, from klbf-lab): **about 54 ms (18.4 fps)**, submitting thread ~36 ms, the card waiting for it 22.5 -> 10.0 ms a frame; then `VICTORY_CCD` (our threads placed by core complex): far -3.3 %, near another -1.5 % standing and -14.8 % driving. |
 | 2026-11-27 | Light frames above 30 a second (on in `play.ps1`, at up to 60): loading screens 30 -> 59 fps, the pause menu about 55, the map 30 -> 42-50, at their normal speed; the world stays at the title's 30. |
+| 2026-11-27 | Eight list translators on 24 threads, then renderer port 7 on (a round of the heaps' records asked for at the title's submit: the submitting thread's wait for them 6.6 -> 2.4 ms a frame, frames -6.2 % in an in-run A/B): **50.0 ms (20.0 fps)** in [Results at a glance](#results-at-a-glance), submitting thread 41 ms, the title waiting at presents 8 ms. |
 
 Moving fast through the world is still far slower (driving: median about 77 ms, p99 about 240 ms,
 with everything in `-Tuned` on before `VICTORY_CCD=near`, which took another 14.8 % off the

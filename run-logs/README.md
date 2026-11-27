@@ -29,7 +29,8 @@ Thinning leaves fewer samples per window, so medians can differ a little from th
 
 | Folder | File | What it shows |
 |---|---|---|
-| `standing/` | `2026-11-27T0757Z-main-counters.txt` | The window behind the README's "Results at a glance" (this fork): main 1ef9e073 plus counters, standing in the test spot. |
+| `standing/` | `2026-11-27T2109Z-bench-port7.txt` | The window behind the README's "Results at a glance" (this fork): main 48e6467b with renderer port 7 on, `-RX7900XTX`, standing in the test spot. |
+| `standing/` | `2026-11-27T0757Z-main-counters.txt` | The window behind the previous "Results at a glance" column (64.7 ms): main 1ef9e073 plus counters, standing in the test spot. |
 | `standing/` | `2026-11-27T0828Z-base-a8f83a3.txt` | The same spot on the base tree (root commit a8f83a3): the "RYUKI base" column. |
 | `standing/` | `2026-11-27T1219Z-ccd-near-ab.txt` | The newest standing run with everything of today's `-Tuned` on; in-run A/B of `VICTORY_CCD` near against far. |
 | `submit-thread/` | `2026-11-27T0834Z-refresh-kinds.txt` | The submitting thread's refreshes split by what the write watch knew before asking. |
