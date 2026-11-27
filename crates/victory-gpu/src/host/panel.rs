@@ -2,12 +2,14 @@
 //! default; F3 shows and hides it while our window has the focus): white
 //! text on a black box in the upper left corner of what is shown, so that a
 //! screenshot carries them, with what it costs itself on the submitting
-//! thread. Made again twice a second from the counters of
-//! the frame-rate line, memory and textures; a frame itself only copies the
+//! thread. Its first line names the card and its driver, so that a screenshot
+//! also says what it was taken on. Made again twice a second from the counters
+//! of the frame-rate line, memory and textures; a frame itself only copies the
 //! box out of a buffer in the card's memory. Copied onto the swap chain's
 //! buffer, behind the title's picture: saved frames and the frame recorder
 //! see the title's own.
 
+use std::collections::VecDeque;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -27,12 +29,15 @@ const GLYPH: (u32, u32) = (5, 7);
 const CELL: (u32, u32) = (6, 9);
 /// Characters in a line, lines, and the box's rim in dots.
 const COLUMNS: u32 = 40;
-const LINES: u32 = 9;
+const LINES: u32 = 11;
 const RIM: u32 = 3;
 
 /// The texts are put into one of these in turn: the card reads the others,
 /// at most half a second old.
 const UPLOADS: usize = 4;
+
+/// Frame times kept for the 99th percentile: about a minute at 15 fps.
+const KEPT: usize = 1000;
 
 fn asked() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
@@ -57,6 +62,39 @@ fn pressed() -> bool {
     // SAFETY: plain queries; room for the answer.
     unsafe { GetWindowThreadProcessId(GetForegroundWindow(), &mut process) };
     process == std::process::id()
+}
+
+/// The card's name and driver version, as the system tells them, cut to a
+/// line. Asked once: neither changes while a device lives.
+fn card(host: &Host) -> &'static str {
+    static CARD: OnceLock<String> = OnceLock::new();
+    CARD.get_or_init(|| {
+        // SAFETY: a plain query that fills a structure.
+        let desc = host.adapter.as_ref().and_then(|a| unsafe { a.GetDesc1() }.ok());
+        let name = desc.map_or_else(String::new, |d| {
+            let end = d.Description.iter().position(|&c| c == 0).unwrap_or(d.Description.len());
+            let mut name = String::from_utf16_lossy(&d.Description[..end]);
+            // Only what has a picture: "Radeon(TM)" is shown as "RADEONTM".
+            name.retain(|c| c.is_ascii_alphanumeric() || " ./-".contains(c));
+            name.trim().to_owned()
+        });
+        let mut line = match host.driver() as u64 {
+            0 => name,
+            v => format!("{name}  {}.{}.{}.{}", v >> 48, (v >> 32) & 0xFFFF, (v >> 16) & 0xFFFF, v & 0xFFFF),
+        };
+        line.truncate(line.char_indices().nth(COLUMNS as usize).map_or(line.len(), |(i, _)| i));
+        line
+    })
+}
+
+/// The 99th percentile (nearest rank) of `times`, in their unit.
+fn p99(times: &VecDeque<f32>) -> Option<f32> {
+    if times.is_empty() {
+        return None;
+    }
+    let mut sorted: Vec<f32> = times.iter().copied().collect();
+    let rank = (sorted.len() * 99).div_ceil(100) - 1;
+    Some(*sorted.select_nth_unstable_by(rank, f32::total_cmp).1)
 }
 
 /// Seven rows of five dots, the leftmost the highest bit.
@@ -206,14 +244,17 @@ impl Counters {
 }
 
 /// The text. `c`: [`Counters`] per frame, `ms` a frame's time, `worst` the
-/// longest frame's, `cost` what this takes of a frame, in microseconds.
-fn text(c: &[f64; COUNTERS], ms: f64, worst: f64, cost: f64, host: &Host) -> Vec<String> {
+/// longest frame's, `p99` the 99th percentile of the last `kept` frames' times,
+/// `cost` what this takes of a frame, in microseconds.
+fn text(c: &[f64; COUNTERS], ms: f64, worst: f64, (p99, kept): (f32, usize), cost: f64, host: &Host) -> Vec<String> {
     let gb = |bytes: u64| bytes as f64 / (1u64 << 30) as f64;
     let (working, private) = crate::copystat::process_memory();
     let [budget, used, _, shared] = host.video_memory().unwrap_or_default();
     let idle = (c[1] / 1e3).min(ms);
     vec![
+        card(host).to_owned(),
         format!("FPS {:.1}  FRAME {ms:.1} MS  LONGEST {worst:.0}", 1e3 / ms.max(0.001)),
+        format!("P99 {p99:.0} MS  {:.1} FPS  LAST {kept} FRAMES", 1e3 / f64::from(p99).max(0.001)),
         format!("DRAWS {:.0}  DROPPED {:.0}", c[10], c[8]),
         format!("SUBMIT BUSY {:.1}  WAITS FOR GPU {:.1}", c[0] / 1e3, c[3] / 1e3),
         format!("GPU BUSY {:.1}  IDLE BEHIND US {:.1}", ms - idle, c[2] / 1e3),
@@ -287,6 +328,11 @@ pub(super) struct Panel {
     frames: u32,
     last: Instant,
     worst: f64,
+    /// The last [`KEPT`] frames' times in milliseconds, the newest last.
+    times: VecDeque<f32>,
+    /// The next shown frame begins a stretch: the first, or the first after
+    /// being hidden (what came before is of another stretch).
+    resume: bool,
     /// What this took since the last text.
     cost: Duration,
     before: Counters,
@@ -304,6 +350,8 @@ impl Panel {
             frames: 0,
             last: now,
             worst: 0.0,
+            times: VecDeque::with_capacity(KEPT),
+            resume: true,
             cost: Duration::ZERO,
             before: Counters::default(),
             lines: Vec::new(),
@@ -320,18 +368,13 @@ impl Panel {
             shown().fetch_xor(true, Ordering::Relaxed);
         }
         if !shown().load(Ordering::Relaxed) {
-            self.frames = 0;
+            self.resume = true;
             return;
         }
         let now = Instant::now();
-        if self.frames == 0 && now - self.last > 2 * EVERY {
-            // (Shown from here on.)
-            (self.since, self.last, self.worst, self.before) = (now, now, 0.0, Counters::now());
-            self.frames = 0;
+        if self.timed(now) {
+            self.before = Counters::now();
         }
-        self.frames += 1;
-        self.worst = self.worst.max((now - self.last).as_secs_f64() * 1e3);
-        self.last = now;
         let elapsed = now - self.since;
         if elapsed < EVERY && !(line && elapsed * 2 >= EVERY) {
             return;
@@ -342,10 +385,34 @@ impl Panel {
         let c = counters.since(self.before, frames);
         self.before = counters;
         let cost = self.cost.as_secs_f64() * 1e6 / frames;
-        self.lines = text(&c, elapsed.as_secs_f64() * 1e3 / frames, self.worst, cost, host);
+        let ms = elapsed.as_secs_f64() * 1e3 / frames;
+        let low = (p99(&self.times).unwrap_or(ms as f32), self.times.len());
+        self.lines = text(&c, ms, self.worst, low, cost, host);
         self.changed = true;
         (self.since, self.frames, self.worst) = (now, 0, 0.0);
         self.cost = now.elapsed();
+    }
+
+    /// Counts a shown frame presented at `now`. True when it begins a
+    /// stretch, which has no frame time of its own; any other frame's time
+    /// is kept, however long (a hitch is what the longest and the 99th
+    /// percentile are for).
+    fn timed(&mut self, now: Instant) -> bool {
+        let begins = std::mem::take(&mut self.resume);
+        if begins {
+            (self.since, self.worst, self.frames) = (now, 0.0, 0);
+            self.times.clear();
+        } else {
+            let ms = (now - self.last).as_secs_f64() * 1e3;
+            if self.times.len() == KEPT {
+                self.times.pop_front();
+            }
+            self.times.push_back(ms as f32);
+            self.worst = self.worst.max(ms);
+        }
+        self.frames += 1;
+        self.last = now;
+        begins
     }
 
     /// Records the copy of the box onto `back`, a buffer of the swap chain of
@@ -461,6 +528,44 @@ mod tests {
             // Nothing past a line's end.
             assert_eq!(at((RIM + CELL.0 * 2 + 2) * scale, (RIM + CELL.1) * scale), colours[0]);
         }
+    }
+
+    #[test]
+    fn the_99th_percentile_is_the_nearest_rank() {
+        assert_eq!(p99(&VecDeque::new()), None);
+        assert_eq!(p99(&(1..=100).rev().map(|i| i as f32).collect()), Some(99.0));
+        // Fewer than a hundred: the longest.
+        assert_eq!(p99(&[30.0, 10.0, 20.0].into()), Some(30.0));
+    }
+
+    /// A frame of more than a second right after a text is kept as a frame.
+    #[test]
+    fn a_hitch_is_a_frame() {
+        let mut panel = Panel::new();
+        let t = Instant::now();
+        assert!(panel.timed(t));
+        assert!(!panel.timed(t + Duration::from_millis(10)));
+        panel.frames = 0; // (as after a text)
+        assert!(!panel.timed(t + Duration::from_millis(1510)));
+        let kept: Vec<f32> = panel.times.iter().map(|ms| ms.round()).collect();
+        assert_eq!(kept, [10.0, 1500.0]);
+        assert_eq!(panel.worst.round(), 1500.0);
+    }
+
+    /// Shown again, even after less than a second, the hidden time is no
+    /// frame and what was kept goes.
+    #[test]
+    fn hidden_time_is_no_frame() {
+        let mut panel = Panel::new();
+        let t = Instant::now();
+        panel.timed(t);
+        panel.timed(t + Duration::from_millis(10));
+        panel.resume = true; // (hidden)
+        assert!(panel.timed(t + Duration::from_millis(300)));
+        assert!(panel.times.is_empty());
+        assert!(!panel.timed(t + Duration::from_millis(320)));
+        assert_eq!(panel.times.len(), 1);
+        assert_eq!(panel.times[0].round(), 20.0);
     }
 
     #[test]

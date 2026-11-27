@@ -1617,7 +1617,7 @@ mod host {
 
         fn keys(&mut self) -> Vec<KeyState> {
             let mut down = scripted();
-            if focused() {
+            if host_keys() && focused() {
                 // Left/right modifier keys only, as devices report them; no
                 // mouse buttons (below 0x08).
                 let held: Vec<u8> = (0x08..=0xFE_u8)
@@ -1664,6 +1664,8 @@ mod host {
     /// time), with or without focus. A key is a
     /// letter, a digit, or `Enter`, `Esc`, `Tab`, `Back`, `Up`, `Down`,
     /// `Left`, `Right` (the stand-in pad's table maps them to buttons).
+    /// The log says when input starts, so that a script reading it
+    /// (`scripts\bench-prison.ps1`) knows when each key was held.
     fn scripted() -> Vec<u8> {
         static SCRIPT: LazyLock<(Instant, Vec<(Duration, Duration, u8)>)> = LazyLock::new(|| {
             let list = std::env::var("VICTORY_KEYS").unwrap_or_default();
@@ -1690,7 +1692,11 @@ mod host {
                 };
                 Some((from, to, vk))
             });
-            (Instant::now(), keys.collect())
+            let keys: Vec<_> = keys.collect();
+            if !keys.is_empty() {
+                tracing::info!(entries = keys.len(), "scripted keys (VICTORY_KEYS): timed from here");
+            }
+            (Instant::now(), keys)
         });
         let (start, keys) = &*SCRIPT;
         let now = start.elapsed();
@@ -1708,6 +1714,16 @@ mod host {
             GetWindowThreadProcessId(GetForegroundWindow(), &mut process);
             process == GetCurrentProcessId()
         }
+    }
+
+    /// Whether the host's keyboard is read (`VICTORY_HOST_KEYS=0`: not, only
+    /// the scripted keys). For unattended runs: a PC can report keys held that
+    /// nobody holds (one here showed 0-9, A-Y and more held all the time, from
+    /// a virtual input device), and the stand-in pad then has W and S, A and D
+    /// at once, so its left stick never moves.
+    fn host_keys() -> bool {
+        static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("VICTORY_HOST_KEYS").is_none_or(|v| v != "0"));
+        *ON
     }
 
     #[test]

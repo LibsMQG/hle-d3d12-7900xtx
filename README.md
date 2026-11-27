@@ -159,6 +159,14 @@ scripts\play.ps1 -RX7900XT -Build release -Exe <path of your copy's executable>
 Windows 10/11 x64, a CPU with AVX2, a Direct3D 12 GPU with shader model 6.6 and mesh shaders,
 Rust (the toolchain is pinned) and the MSVC build tools.
 
+To measure a change the same way every time, `scripts\bench-prison.ps1` (diagnostics build) runs
+the title unattended from a save at the start of the prison scene, with `play.ps1`'s settings and
+the panel of numbers in the upper left corner (`VICTORY_PANEL`, F3 in play): it stands, walks into
+the dormitory, turns the camera and walks on through the stand-in pad, and writes a table of each
+phase's fps, median and 99th-percentile frame time, 1% low, preparing and GPU time, with
+screenshots, outside this folder. Its header says how to make the save and the cache it starts
+from.
+
 ## Credits
 
 A tree of other people's work. The history is kept, and commits taken from elsewhere keep their

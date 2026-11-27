@@ -5,6 +5,46 @@ Each entry names the commit and, where there is one, a tag to go back to:
 (after saving anything newer elsewhere). Frame rates are medians of the log's
 frame lines in the world, diagnostics build, on the PC in the README.
 
+## A route through the prison to measure with; the panel names the card (2026-11-27)
+
+`scripts\bench-prison.ps1` runs the title unattended from a save at the start of
+the prison scene, with `play.ps1`'s settings (now in `scripts\settings.ps1`, which
+both read): it stands at the cell window, walks into the dormitory, turns the
+camera, walks on and walks while turning, through the stand-in pad's keys. Every
+frame's time comes from the frame log and falls into its phase by the new
+"scripted keys" log line; each phase gets fps, median and 99th-percentile frame
+time, 1% low, longest frame, preparing, waits for the card and the card's own
+working time. Output goes outside the checkout (it refuses one inside it, and
+one overlapping its save or cache).
+
+Unattended keys did not move her at first: this PC's system reported 0-9, A-Y and
+more as held all the time (a virtual input device), so the stand-in pad had W and
+S, A and D at once and its left stick stayed still. `VICTORY_HOST_KEYS=0` reads
+only the scripted keys; the script sets it.
+
+The panel (`VICTORY_PANEL`, F3) gets two lines: the card's name and driver, so a
+screenshot says what it was taken on, and the 99th percentile of the last 1,000
+frames' times. Its longest frame and the percentile now keep a frame of over a
+second right after the text changed (before, that frame started the panel over
+as if it had been hidden), and a short F3 off and on no longer counts the hidden
+time as a frame.
+
+First numbers from an RX 9070 XT (driver 32.0.32029.2010), Ryzen 7 9800X3D,
+31 GB, diagnostics build, Series X profile, `-RX7900XT` settings, three runs,
+medians (min-max of the runs):
+
+| Phase | fps | P99 ms | 1% low fps |
+|---|---|---|---|
+| stand | 22.7 (22.2-22.8) | 61 (58-62) | 16.2 (15.6-16.2) |
+| into the dormitory | 23.0 (18.1-23.5) | 181 (155-191) | 4.8 (4.2-5.3) |
+| look around | 14.1 (13.3-15.4) | 316 (189-395) | 2.8 (2.2-3.5) |
+| walk | 25.9 (23.4-26.1) | 112 (62-126) | 3.5 (3.4-11.8) |
+| walk and turn | 16.0 (16.0-16.6) | 175 (150-190) | 4.3 (4.0-6.2) |
+
+Standing, the panel on against off (the old fixed-spot runs, three each):
+44.2 against 43.9 ms a frame, within the runs' spread; it says it takes
+55-85 us a frame.
+
 ## What the repository carries, checked (2026-11-26)
 
 Microsoft Defender (signatures of the day) finds nothing in the repository's
