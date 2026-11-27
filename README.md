@@ -1,4 +1,4 @@
-# hle-d3d12-runtime
+# hle-d3d12-7900xtx
 
 A compatibility runtime that runs x64 PE executables built for another platform natively on
 Windows: high-level emulation of their system services, a Direct3D 12 GPU back end and an
@@ -8,11 +8,35 @@ RDNA-to-DXIL shader recompiler. A fork of
 [VIctory](https://github.com/Marvisak/VIctory). Developed and measured on an
 **RX 7900 XTX with 32 GB of RAM**.
 
+## Results at a glance
+
+This fork (`main` at `1ef9e07`, `play.ps1 -Tuned`) against the RYUKI base it started from
+(its own tuned settings), same PC, same fixed test spot standing still, diagnostics builds,
+no errors in the log, picture complete in both.
+
+| | RYUKI base | This fork | Gain |
+|---|---|---|---|
+| Frame time (median) | 78.8 ms (p90 87.7) | **64.7 ms** (p90 68.1) | **-18 %** |
+| Frame rate | 12.7 fps | **15.5 fps** | **+22 %** |
+| CPU: submitting thread's work per frame | 75.5 ms | **48.1 ms** | **-36 %** |
+| CPU: title waiting at presents | 28.1 ms | 19.5 ms | -31 % |
+| GPU board power (median) | 273 W | **199 W** | **-74 W** |
+| GPU activity / graphics clock | 100 % / 3.08 GHz | 70 % / 1.99 GHz | same work, less effort |
+| Write-combined memory committed | 13.7 GB | 12.9 GB | -0.8 GB |
+| Process RAM: working set / private | 10.8 / 27.5 GB | 11.2 / 26.7 GB | about the same |
+| VRAM in use | 11.0 GB | 11.2 GB | about the same |
+
+The frame is limited by the CPU thread that turns the title's command lists into Direct3D 12
+work, not by the GPU: most of the gain is that thread doing less. Power, activity and clock come
+from the card's sensors (4 samples a second); the base also keeps the card's clocks up on
+purpose, which is part of the power difference. One run per side (40-60 s): the same build
+varies by about 15 ms from run to run.
+
 **This repository contains no game files, code or assets.** You need your own copy of the
 software you run with it. The asset policy ([docs/asset-policy.md](docs/asset-policy.md)) is
 checked by `cargo xtask policy` and by the pre-commit hook (`cargo xtask install-hooks`).
 
-Contents: [PC](#the-pc-it-is-measured-on) ·
+Contents: [Results](#results-at-a-glance) · [PC](#the-pc-it-is-measured-on) ·
 [Milestones](#milestones) ·
 [Where the code comes from](#where-the-code-comes-from) ·
 [Our own work](#our-own-work) ·
@@ -40,6 +64,7 @@ Standing still in one fixed test spot, release or diagnostics build, median fram
 | 2026-11-26 | Rebased on the RYUKI tree, with this fork's fixes and diagnostics on top: 73 ms (13.6 fps), picture complete once the pipeline cache is built, no errors in the log. |
 | 2026-11-27 | Renderer ports 1 and 5, then the RDNA3 fork's submit-thread changes and buffers in place: about 70 ms; the submitting thread's work went from ~77 to ~57 ms a frame. |
 | 2026-11-27 | Renderer port 2 (descriptor stores tell their slots): **about 68 ms (14.7 fps)**, submitting thread ~51 ms; no picture defects standing, walking or moving fast. |
+| 2026-11-27 | Descriptor records compared in place, dynamic bits, prelude pool: **64.7 ms (15.5 fps)**, submitting thread 48 ms, GPU at 199 W instead of the base's 273 W ([Results at a glance](#results-at-a-glance)). |
 
 Moving fast through the world is still far slower (about 6-12 fps): pipelines met for the first time
 and memory pressure, see [Known limits](#known-limits).
