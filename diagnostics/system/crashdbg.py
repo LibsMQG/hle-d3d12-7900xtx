@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Run a program of ours until it crashes and print where: python -I dbg.py <runs> <exe> [args...]
 Only starts and reads the process it started (debug API of Windows)."""
 import ctypes as C

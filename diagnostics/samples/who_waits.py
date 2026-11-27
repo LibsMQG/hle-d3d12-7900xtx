@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Per thread: wait samples whose stack goes through a given substring. Read only.
 Usage: python -I who_waits.py <csv> <substring> [substring...]"""
 import collections

@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Sampler CSV: one thread's samples whose stack goes through one of the given functions: by leaf, and by the first
 two frames of ours, busy and waiting apart. Shares are of the thread's samples. Read only.
 Usage: python -I refresh_leaves.py <csv> <tid> <substring> [substring...]"""

@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Groups what the title asked for memory and resources, from a diagnostic log
 run with VICTORY_LOG="info,victory_hle::modules::xmem=debug,victory_gpu::resource=debug".
 Read only. Usage: python -I tools/intent.py <log> [--map out.tsv]"""

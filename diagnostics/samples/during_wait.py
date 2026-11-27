@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """At the ticks where thread A's stack holds `needle`, what thread B is doing (its leaf kind and first frames of ours). Read only.
 Usage: python -I during_wait.py <csv> <tid A> <needle> <tid B> [frames 3]"""
 import collections

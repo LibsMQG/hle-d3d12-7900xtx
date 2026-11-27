@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Read-only: numbers (order in known-pipelines.bin) of the pipelines whose only shader is a container
 naming XboxBvhBuilder (the ray-tracing structure builder), comma-separated, plus counts on stderr."""
 import struct

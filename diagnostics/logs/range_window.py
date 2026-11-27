@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Means over a UTC window of the per-range refresh lines ("copied from A+L ..."), the ten costliest ranges by
 time, and the refresh line of the submitting thread. Read only.
 Usage: python -I range_window.py <log> <HH:MM:SS> <HH:MM:SS>"""

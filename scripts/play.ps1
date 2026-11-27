@@ -1,4 +1,4 @@
-# hle-d3d12-7900xtx launcher: presets, switches and settings by libs.
+# hle-d3d12-amd launcher: presets, switches and settings by libs.
 # Starts the title with the settings this fork is played with (README.md, "How to run it").
 #   scripts\play.ps1 -Exe <path of your own copy's executable>
 # -Safe         without the newer, faster ways (the first thing to try when something is wrong)

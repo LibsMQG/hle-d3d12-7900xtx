@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """VICTORY_AB run with one switch (any): phase medians per side, each ON phase against the mean
 of its OFF neighbours, and the counters of the lines logged inside each phase (5 s or more after its start). Read only.
 Usage: python -I ab_fault.py <log> <first phase> <last phase>"""

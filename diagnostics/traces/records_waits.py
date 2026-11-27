@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Timeline trace: where the records threads (victory-records-N) and the heap-sync thread wait, and who woke them,
 summed over the trace; and their landing jobs. Read only.
 Usage: python -I records_waits.py <trace.json>"""

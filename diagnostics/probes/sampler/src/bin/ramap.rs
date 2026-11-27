@@ -1,4 +1,4 @@
-// Author: libs (hle-d3d12-7900xtx)
+// Author: libs (hle-d3d12-amd)
 //! ramap: where a process's memory is, and how much of it is held twice.
 //!
 //! Opens the target with PROCESS_QUERY_INFORMATION | PROCESS_VM_READ only: it

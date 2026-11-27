@@ -1,4 +1,4 @@
-// Author: libs (hle-d3d12-7900xtx)
+// Author: libs (hle-d3d12-amd)
 //! membench: what the memory calls VIctory leans on cost on this PC, on
 //! memory of this process only: ReadProcessMemory against a plain copy,
 //! GetWriteWatch, VirtualProtect and VirtualQuery, on private memory and on

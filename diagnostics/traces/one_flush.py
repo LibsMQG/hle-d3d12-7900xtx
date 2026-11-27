@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Timeline trace: inside one span of the submitting thread (the n-th longest of a name), what every thread did:
 per thread, time in our spans by name (outermost within the window), waits, and running outside spans. Read only.
 Usage: python -I one_flush.py <trace.json> <span name> [rank 0]"""

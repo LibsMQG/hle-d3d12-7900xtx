@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Where the frame goes: medians of steady heavy-scene blocks. python -I model.py <log>... Read only."""
 import re
 import statistics as st

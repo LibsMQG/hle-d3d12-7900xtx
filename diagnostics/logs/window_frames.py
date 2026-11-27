@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Frame blocks of a VIctory log between two UTC times (HH:MM:SS), e.g. a walk: count, median, p90 and max ms/frame,
 median draws, card wait; and the VICTORY_DISK_STATS reports in the same window (MB/s from disk). Read only.
 Usage: python -I tools/window_frames.py <log> <from HH:MM:SS> <to HH:MM:SS>"""

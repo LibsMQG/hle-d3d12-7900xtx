@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """growthwatch: follows a running game's log (and memread's .jsonl) and prints one line per event, for someone watching the run:
 when moving starts, a status every few minutes, when the growth of the card's memory looks stopped, the re-check
 45 s later, releases of texture copies, and the game closing. Reads files only; touches nothing.

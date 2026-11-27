@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Sums the VICTORY_CHANGED_BYTES lines of a diagnostic log over its last
 reports, per reservation, weighted by frames. Read only.
 Usage: python -I tools/changed.py <log> [last reports, default 8]"""

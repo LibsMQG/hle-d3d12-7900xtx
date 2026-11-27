@@ -1,4 +1,4 @@
-// Author: libs (hle-d3d12-7900xtx)
+// Author: libs (hle-d3d12-amd)
 //! gpuburst: how the card's clock, and the time of a fixed piece of work,
 //! depend on how full the card is. It runs short compute work back to back,
 //! then with gaps between the pieces (as VIctory's submissions have them), and

@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Timeline trace: the durations of one span name on one thread, within the recorded frames: the longest ones, the
 sum per frame, and the share of the longest tenth. Read only.
 Usage: python -I span_sizes.py <trace.json> <thread name> <span name> [top n]"""

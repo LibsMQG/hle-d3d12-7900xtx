@@ -1,4 +1,4 @@
-// Author: libs (hle-d3d12-7900xtx)
+// Author: libs (hle-d3d12-amd)
 //! sampler: a small user-mode sampling profiler for Windows (no admin, no ETW).
 //!
 //! It only ever opens the target with PROCESS_QUERY_INFORMATION | PROCESS_VM_READ

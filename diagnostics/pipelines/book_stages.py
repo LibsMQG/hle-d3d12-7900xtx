@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Read-only: which pipelines the title created (pipeline book in <cache>/pipelines) hold a geometry,
 hull or domain stage, and which hold shaders whose containers carry given names (for example shaders the translator refused), and
 whether runs drew with them (early-pipelines.txt).

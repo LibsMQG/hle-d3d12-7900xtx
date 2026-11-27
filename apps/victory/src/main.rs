@@ -21,7 +21,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[derive(Parser)]
 #[command(
     name = "victory",
-    version = concat!(env!("CARGO_PKG_VERSION"), " (hle-d3d12-7900xtx by libs)"),
+    version = concat!(env!("CARGO_PKG_VERSION"), " (hle-d3d12-amd by libs)"),
     author = "libs",
     about = "Run a console title's x64 executable natively on Windows"
 )]

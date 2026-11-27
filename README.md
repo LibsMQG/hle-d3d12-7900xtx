@@ -1,12 +1,13 @@
-# hle-d3d12-7900xtx
+# hle-d3d12-amd
 
 A compatibility runtime that runs x64 PE executables built for another platform natively on
 Windows: high-level emulation of their system services, a Direct3D 12 GPU back end and an
-RDNA-to-DXIL shader recompiler. A fork of
+RDNA-to-DXIL shader recompiler, tuned for **AMD setups** (an AMD Radeon card with an AMD Ryzen
+CPU). A fork of
 [YukiRyuu/RYUKI-7900XT](https://github.com/YukiRyuu/RYUKI-7900XT), itself built on
 [avatarmanz/VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX) and
-[VIctory](https://github.com/Marvisak/VIctory). Developed and measured on an
-**RX 7900 XTX with 32 GB of RAM**.
+[VIctory](https://github.com/Marvisak/VIctory). Developed and measured on one such PC
+([below](#the-pc-it-is-measured-on)); `play.ps1 -Tuned` sizes itself to yours.
 
 Maintained by **libs**: the ports, measurements, diagnostics and launcher presets of this fork.
 Developed as a **collaboration with eikkapine**

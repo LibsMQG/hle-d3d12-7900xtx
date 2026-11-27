@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Summary numbers of one window of a run (for example standing still in one spot). Read only.
 Usage: python -I window_summary.py <log> <from HH:MM:SS UTC> <to HH:MM:SS UTC> [counters.csv]
 

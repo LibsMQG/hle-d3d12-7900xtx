@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Timeline trace: for the waits on one lock (its address), who woke them and in what span of ours the waker was,
 summed by waiter kind, waker kind and the waker's innermost span. Read only.
 Usage: python -I lock_wakers.py <trace.json> <lock address hex>"""

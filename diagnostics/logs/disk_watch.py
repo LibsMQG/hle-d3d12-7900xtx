@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Follows the newest run-*.log in a folder while the game runs and prints, once a minute, the DirectStorage
 report (VICTORY_DISK_STATS=1): MB/s, requests, busy and reading workers, BCPack MB and workers, staging waits,
 queue. Says when the world is reached (first frame line with >= 1000 draws) and warns when files are opened

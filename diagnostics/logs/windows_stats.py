@@ -1,4 +1,4 @@
-# Author: libs (hle-d3d12-7900xtx)
+# Author: libs (hle-d3d12-amd)
 """Means per time window of the heap-records lines and CPU_STATS lines of a VIctory log. Read only.
 Usage: python -I windows_stats.py <log> <name=HH:MM:SS-HH:MM:SS> [...]"""
 import re
