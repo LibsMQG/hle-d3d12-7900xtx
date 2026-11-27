@@ -1360,6 +1360,15 @@ pub(crate) fn prelude_pool() -> bool {
     if PRELUDE_POOL_FORCED.load(Ordering::Relaxed) {
         return true;
     }
+    // Diagnostics: `VICTORY_AB=<s>,VICTORY_PRELUDE_POOL` turns it on and off
+    // while the title runs (a list's own prelude, once made, stays).
+    #[cfg(all(windows, feature = "diagnostics"))]
+    {
+        static BIT: OnceLock<Option<u32>> = OnceLock::new();
+        if let Some(bit) = *BIT.get_or_init(|| crate::ab::bit("VICTORY_PRELUDE_POOL")) {
+            return crate::ab::on(bit);
+        }
+    }
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var("VICTORY_PRELUDE_POOL").ok().as_deref().map(str::trim) == Some("1"))
 }

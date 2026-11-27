@@ -309,6 +309,15 @@ pub(crate) fn recycle(lists: Vec<Detached>, ran: &[usize]) {
 /// count: "lists' allocators 9 GB" of 40-46 GB private).
 #[cfg(windows)]
 fn idle_list_ms() -> u64 {
+    // Diagnostics: `VICTORY_AB=<s>,VICTORY_LIST_POOL_IDLE_S` lets idle lists
+    // go after 10 s in its on phases, never in the others.
+    #[cfg(feature = "diagnostics")]
+    {
+        static BIT: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+        if let Some(bit) = *BIT.get_or_init(|| crate::ab::bit("VICTORY_LIST_POOL_IDLE_S")) {
+            return if crate::ab::on(bit) { 10_000 } else { 0 };
+        }
+    }
     static S: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *S.get_or_init(|| {
         std::env::var("VICTORY_LIST_POOL_IDLE_S").ok().and_then(|v| v.trim().parse::<u64>().ok()).map_or(0, |s| s.min(3600))
