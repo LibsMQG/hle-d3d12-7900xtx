@@ -60,6 +60,8 @@ mod port_cbv;
 mod port_journal;
 #[cfg(windows)]
 pub mod port_descriptors;
+#[cfg(all(windows, feature = "diagnostics"))]
+mod port_trace;
 #[cfg(windows)]
 mod land;
 pub mod list;

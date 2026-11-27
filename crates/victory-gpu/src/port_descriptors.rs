@@ -103,6 +103,13 @@ pub fn hooked(base: usize, size: usize, patched: usize) {
     IMAGE[2].store(patched, Relaxed);
 }
 
+/// The title's image: its base and size (0, 0 before the launcher told), for
+/// the writer trace (`crate::port_trace`).
+#[cfg(feature = "diagnostics")]
+pub(crate) fn title_image() -> (usize, usize) {
+    (IMAGE[0].load(Relaxed), IMAGE[1].load(Relaxed))
+}
+
 /// Whether [`take`] stands for the heap's changed pages: the switch is on and
 /// the stores were patched.
 fn working() -> bool {
@@ -476,6 +483,9 @@ pub(crate) fn missed(index: u32, handle: u64, view: bool, tabled: bool, record: 
         let hash = record_hash(record);
         with_sort(|s| s.missed.push((index, handle, hash, kind)));
     }
+    // Diagnostics: a slot for the writer trace to watch.
+    #[cfg(feature = "diagnostics")]
+    crate::port_trace::candidate(handle);
     let n = MISSED_ALL.fetch_add(1, Relaxed);
     let rip = a.writers.get(((handle - a.start) >> 16) as usize).map_or(0, |w| w.load(Relaxed));
     let (base, size) = (IMAGE[0].load(Relaxed), IMAGE[1].load(Relaxed));
@@ -777,6 +787,8 @@ pub(crate) fn line(frames: f64) {
             s[13]
         );
     }
+    #[cfg(feature = "diagnostics")]
+    crate::port_trace::line(frames);
 }
 
 #[cfg(test)]
