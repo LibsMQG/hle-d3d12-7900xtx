@@ -79,7 +79,7 @@ title's own output resolution, no frame generation, ray-traced light off.
 | 2026-11-27 | Descriptor records compared in place, dynamic bits, prelude pool: **64.7 ms (15.5 fps)**, submitting thread 48 ms, GPU at 199 W instead of the base's 273 W ([Results at a glance](#results-at-a-glance)). |
 | 2026-11-27 | Renderer port 6 on (guards' lock waits 26.4 -> 4.0 ms a frame, frames -2.6 %); `VICTORY_SOFT_VIEWS=copies` (driving: slow frames about halved, p99 457 -> 271 ms). |
 | 2026-11-27 | Write-combined memory of 1 MiB and over kept on the card (`VICTORY_SKIP_WC_BACK`, from klbf-lab): **about 54 ms (18.4 fps)**, submitting thread ~36 ms, the card waiting for it 22.5 -> 10.0 ms a frame; then `VICTORY_CCD` (our threads placed by core complex): far -3.3 %, near another -1.5 % standing and -14.8 % driving. |
-| 2026-11-27 | Light frames above 30 a second (`play.ps1 -Fps 60`): loading screens 30 -> 59 fps, the pause menu about 55, the map 30 -> 42-50, at their normal speed; the world stays at the title's 30. |
+| 2026-11-27 | Light frames above 30 a second (on in `play.ps1`, at up to 60): loading screens 30 -> 59 fps, the pause menu about 55, the map 30 -> 42-50, at their normal speed; the world stays at the title's 30. |
 
 Moving fast through the world is still far slower (driving: median about 77 ms, p99 about 240 ms,
 with everything in `-Tuned` on before `VICTORY_CCD=near`, which took another 14.8 % off the
@@ -176,7 +176,8 @@ the card, one after the other), not by RAM or VRAM traffic; port 2's real misses
 - **The host GPU is made before the title starts** (`VICTORY_HOST_EARLY`, on): the title's own
   30 s start-up watchdog no longer ends the run while AMD's driver reads its pipeline cache in
   `D3D12CreateDevice` (5 of 46 starts ended this way before).
-- **Light frames above 30 a second** (`play.ps1 -Fps 60`, `VICTORY_FPS`; off by default): after
+- **Light frames above 30 a second** (`VICTORY_FPS`; on in `play.ps1` at 60, `-Fps <N>` for
+  another rate, `0` for no limit, `off` or `-Safe` for the title's 30): after
   8 frames in a row of at most 500 draws (videos, loading screens, the pause menu, the map), a
   frame is held only to 1/N s instead of the title's 33.3 ms ticks. The title's own frame limiter
   (`QueryPerformanceCounter` and `Sleep(2)` against its frame interval, on in the world too) is let

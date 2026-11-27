@@ -15,8 +15,9 @@
 # -SkipMovies   skips the opening movies (off by default): once (logos and intros), all (looping
 #               menu backgrounds too, which then stay dark); VICTORY_SKIP_BINK
 # -Fps          frames a second for light frames, those of at most 500 draws (videos, loading
-#               screens, the pause menu, the map), in place of the title's 30; 0 for no limit.
-#               The world stays at the title's 30. Off by default; VICTORY_FPS
+#               screens, the pause menu, the map), in place of the title's 30: 60 by default
+#               (not with -Safe), 0 for no limit, off for the title's 30. The world stays at
+#               the title's 30; VICTORY_FPS
 # -List         only print the settings this line would start with, and stop
 # -More         other settings: -More @{VICTORY_PANEL='1'}
 # Run it from a normal window, not as administrator: the driver then keeps its shader cache elsewhere.
@@ -31,7 +32,7 @@ param(
     [switch]$List,
     [ValidateSet('once', 'all')][string]$SkipMovies = '',
     [ValidateSet('diag', 'release')][string]$Build = 'diag',
-    [ValidatePattern('^\d{0,4}$')][string]$Fps = '',
+    [ValidatePattern('^(\d{1,4}|off)$')][string]$Fps = '60',
     [hashtable]$More = @{}
 )
 # VICTORY_CARD_AWAKE (the card's clocks kept up between submissions, host/awake.rs) is
@@ -50,7 +51,9 @@ if ($Safe) {
 }
 if ($RayTracing) { $settings.VICTORY_BVH_BUILDER = '1' }
 if ($SkipMovies) { $settings.VICTORY_SKIP_BINK = $(if ($SkipMovies -eq 'all') { 'all' } else { '1' }) }
-if ($Fps) { $settings.VICTORY_FPS = $Fps }
+# Light frames at up to 60 a second (the title's own limiter let through for them, its
+# simulation's shortest step following): -Safe and -Fps off leave the title's 30.
+if ($Fps -ne 'off' -and -not ($Safe -and -not $PSBoundParameters.ContainsKey('Fps'))) { $settings.VICTORY_FPS = $Fps }
 if ($RX7900XTX) { $Tuned = $true }
 $machine = ''
 if ($Tuned) {
