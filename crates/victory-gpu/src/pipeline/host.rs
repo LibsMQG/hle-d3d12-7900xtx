@@ -1317,7 +1317,10 @@ mod tests {
 
     /// A graphics pipeline with `DepthBoundsTestEnable` loads back from the
     /// pipeline library and culls or passes fragments according to
-    /// `OMSetDepthBounds` (including across a command-list cut).
+    /// `OMSetDepthBounds` (including across a command-list cut), with the
+    /// depth test on (`ALWAYS`, no writes: only depth bounds decides) and off.
+    /// The software adapter (WARP, the CI machine's only device) draws outside
+    /// the bounds with the depth test off, so that case runs on hardware only.
     #[test]
     fn depth_bounds_pipeline_loads_and_filters_draws() {
         let Some(host) = host() else {
@@ -1331,20 +1334,46 @@ mod tests {
             eprintln!("no PC dxc.exe; skipped");
             return;
         };
+        depth_bounds_draws(host, &dxc, true);
+        if software_adapter(host) {
+            eprintln!("software adapter: depth bounds with the depth test off not checked");
+        } else {
+            depth_bounds_draws(host, &dxc, false);
+        }
+    }
+
+    /// Whether the host device is on a software adapter (WARP).
+    fn software_adapter(host: &crate::host::Host) -> bool {
+        use windows::Win32::Graphics::Dxgi::{
+            CreateDXGIFactory2, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_CREATE_FACTORY_FLAGS, IDXGIAdapter1, IDXGIFactory4,
+        };
+        // SAFETY: plain DXGI adapter queries.
+        unsafe {
+            CreateDXGIFactory2::<IDXGIFactory4>(DXGI_CREATE_FACTORY_FLAGS(0))
+                .and_then(|f| f.EnumAdapterByLuid::<IDXGIAdapter1>(host.device.GetAdapterLuid()))
+                .and_then(|a| a.GetDesc1())
+                .is_ok_and(|d| d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0)
+        }
+    }
+
+    /// The two draws of [`depth_bounds_pipeline_loads_and_filters_draws`]
+    /// through a depth-bounds pipeline, its depth test on or off.
+    fn depth_bounds_draws(host: &crate::host::Host, dxc: &Path, depth_test: bool) {
         let dir = tempfile::tempdir().unwrap();
-        let vs = compile(&dxc, dir.path(), VS, "vs_6_5");
-        let ps = compile(&dxc, dir.path(), PS, "ps_6_5");
+        let vs = compile(dxc, dir.path(), VS, "vs_6_5");
+        let ps = compile(dxc, dir.path(), PS, "ps_6_5");
         let (root, root_blob) = root_signature(&host.device, &[], &[], false).unwrap();
 
         let mut g = GraphicsState::default();
-        // Subobject 21 (`DEPTH_STENCIL1`) with `DepthBoundsTestEnable = true`,
-        // depth test itself off so only depth bounds gates the draw.
+        // Subobject 21 (`DEPTH_STENCIL1`) with `DepthBoundsTestEnable = true`;
+        // the depth test, when on, passes everything, so only depth bounds
+        // gates the draw.
         #[repr(C, align(8))]
         struct Sub21(u32, D3D12_DEPTH_STENCIL_DESC1);
         let sub = Sub21(
             21,
             D3D12_DEPTH_STENCIL_DESC1 {
-                DepthEnable: false.into(),
+                DepthEnable: depth_test.into(),
                 DepthWriteMask: D3D12_DEPTH_WRITE_MASK_ZERO,
                 DepthFunc: D3D12_COMPARISON_FUNC_ALWAYS,
                 DepthBoundsTestEnable: true.into(),
@@ -1563,8 +1592,9 @@ mod tests {
             }
         };
 
-        assert_eq!(run_draw(0.6, 1.0), 0, "depth 0.5 outside [0.6, 1.0] must be rejected");
-        assert_eq!(run_draw(0.4, 0.6), 255, "depth 0.5 inside [0.4, 0.6] must pass");
+        let test = if depth_test { "on" } else { "off" };
+        assert_eq!(run_draw(0.6, 1.0), 0, "depth 0.5 outside [0.6, 1.0] must be rejected (depth test {test})");
+        assert_eq!(run_draw(0.4, 0.6), 255, "depth 0.5 inside [0.4, 0.6] must pass (depth test {test})");
     }
 
     fn element(format: DXGI_FORMAT, offset: u32) -> D3D12_INPUT_ELEMENT_DESC {
