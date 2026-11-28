@@ -1387,13 +1387,21 @@ fn shape_made(shape: &Shape, kept: usize) {
             )
         })
         .collect();
+    let kept_why: Vec<u64> = BUFFER_KEPT_SHAPES.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
     tracing::info!(
-        "shapes of placed views: {} made in {:.0} s ({kept} kept), {} compared with the last of their kind; words that differed: {}; by view dimension: {}",
+        "shapes of placed views: {} made in {:.0} s ({kept} kept), {} compared with the last of their kind; words that differed: {}; by view dimension: {}; \
+         buffer views left to shapes: {} of no element, {} of part of the buffer, {} from another first element, {} with a counter, {} too long, {} for want of room for a model",
         m.made,
         m.since.elapsed().as_secs_f64(),
         m.compared,
         top(&m.differed, 8),
-        by.join(" | ")
+        by.join(" | "),
+        kept_why[0],
+        kept_why[1],
+        kept_why[2],
+        kept_why[3],
+        kept_why[4],
+        kept_why[5]
     );
     (m.since, m.made, m.compared, m.differed) = (std::time::Instant::now(), 0, 0, [0; 28]);
     m.by_dimension.clear();
@@ -1422,8 +1430,10 @@ fn buffer_view_words(unordered: bool) -> (usize, usize, usize, usize, Option<usi
     if unordered { (2, 4, 5, 8, Some(6)) } else { (4, 6, 7, 8, None) }
 }
 
-/// The bytes of a buffer view's element, from its stride and flags: the
-/// stride of a structured view, four of a raw one; `None` for a typed view.
+/// The bytes of a buffer view's element, from its stride, flags and format:
+/// the stride of a structured view, four of a raw one, and the element of a
+/// typed view's format, as the host sizes them (`element_size` in
+/// `descriptor::host`); `None` for a format without an element of one texel.
 fn buffer_element_bytes(view: &[u32; 14], unordered: bool) -> Option<u32> {
     const RAW: u32 = 1;
     let (_, _, stride, flags, _) = buffer_view_words(unordered);
@@ -1432,8 +1442,23 @@ fn buffer_element_bytes(view: &[u32; 14], unordered: bool) -> Option<u32> {
     } else if view[flags] & RAW != 0 {
         Some(4)
     } else {
-        None
+        match crate::resource::element(crate::resource::pc_format(view[0])) {
+            Some((bytes, 1)) => u32::try_from(bytes).ok(),
+            _ => None,
+        }
     }
+}
+
+/// Diagnostics: placed buffer views [`buffer_words`] could not name whole,
+/// since the last shapes line, by why: a format without an element, a view
+/// of part of the buffer (its elements' bytes are not the width), another
+/// first element, a counter, too many elements, no room for its model.
+#[cfg(feature = "diagnostics")]
+static BUFFER_KEPT_SHAPES: [std::sync::atomic::AtomicU64; 6] = [const { std::sync::atomic::AtomicU64::new(0) }; 6];
+
+#[cfg(feature = "diagnostics")]
+fn buffer_kept_shape(why: usize) {
+    BUFFER_KEPT_SHAPES[why].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// The record words that name a view of a buffer the title placed at
@@ -1443,9 +1468,10 @@ fn buffer_element_bytes(view: &[u32; 14], unordered: bool) -> Option<u32> {
 /// driving, once their unread words were left out); such a view is named by
 /// its model, which is all of it but the buffer's width and the view's
 /// element count, alike for nearly all of them. Only a view of the whole
-/// buffer from its first element (the width is the elements' bytes), raw
-/// or structured, with no counter, of fewer than 2^18 elements, and while
-/// there is room for its model; `None` for any other, which keeps its shape.
+/// buffer from its first element (the width is the elements' bytes), raw,
+/// structured or typed, with no counter, of fewer than 2^18 elements, and
+/// while there is room for its model; `None` for any other, which keeps its
+/// shape (diagnostics: counted by why, [`BUFFER_KEPT_SHAPES`]).
 fn buffer_words(shape: &Shape, address: u64) -> Option<[u32; 2]> {
     const BUFFER: u32 = 1;
     let (unordered, resource, view) = shape;
@@ -1453,16 +1479,19 @@ fn buffer_words(shape: &Shape, address: u64) -> Option<[u32; 2]> {
         return None;
     }
     let (first, count, _, _, counter) = buffer_view_words(*unordered);
-    let element = buffer_element_bytes(view, *unordered)?;
     let elements = view[count];
     let width = u64::from(resource[4]) | u64::from(resource[5]) << 32;
-    if view[first] != 0
-        || view[first + 1] != 0
-        || counter.is_some_and(|c| view[c] != 0 || view[c + 1] != 0)
-        || elements == 0
-        || elements >> BUFFER_ELEMENT_BITS != 0
-        || u64::from(elements) * u64::from(element) != width
-    {
+    let why = match buffer_element_bytes(view, *unordered) {
+        None => Some(0),
+        Some(element) if elements == 0 || u64::from(elements) * u64::from(element) != width => Some(1),
+        Some(_) if view[first] != 0 || view[first + 1] != 0 => Some(2),
+        Some(_) if counter.is_some_and(|c| view[c] != 0 || view[c + 1] != 0) => Some(3),
+        Some(_) if elements >> BUFFER_ELEMENT_BITS != 0 => Some(4),
+        Some(_) => None,
+    };
+    if let Some(_why) = why {
+        #[cfg(feature = "diagnostics")]
+        buffer_kept_shape(_why);
         return None;
     }
     let mut model = *shape;
@@ -1479,7 +1508,11 @@ fn buffer_words(shape: &Shape, address: u64) -> Option<[u32; 2]> {
                     models.push(model);
                     models.len() - 1
                 }
-                None => return None,
+                None => {
+                    #[cfg(feature = "diagnostics")]
+                    buffer_kept_shape(5);
+                    return None;
+                }
             }
         }
     };
@@ -2377,9 +2410,15 @@ mod tests {
             create_placed_uav(null, &buffer(u64::from(n) * 16, 0), &uav, at);
             assert_eq!(kind(), BUFFER_VIEW);
             assert_eq!(view(at), Some(View::Placed(true, buffer(u64::from(n) * 16, 0), uav)));
+            // A typed shader view, of a format of four bytes an element.
+            let mut typed = [0u32; 16];
+            (typed[0], typed[1], typed[2], typed[6], typed[10], typed[11]) = (42, 1, 0x1688, n, low, high);
+            create_placed_srv(null, &buffer(u64::from(n) * 4, 0), &typed, at);
+            assert_eq!(kind(), BUFFER_VIEW);
+            assert_eq!(view(at), Some(View::Placed(false, buffer(u64::from(n) * 4, 0), typed)));
         }
-        assert_eq!(shapes(), 0, "no shape for 6,000 buffer views of every length");
-        assert_eq!(models(), 2);
+        assert_eq!(shapes(), 0, "no shape for 9,000 buffer views of every length");
+        assert_eq!(models(), 3);
         // Of part of the buffer, or from another first element: a shape, as before.
         let mut part = [0u32; 16];
         (part[0], part[1], part[2], part[6], part[8], part[10], part[11]) = (0x2a, 1, 0x1688, 10, 1, 0x6000_0000, 0xd);
