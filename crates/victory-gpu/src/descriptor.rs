@@ -596,7 +596,7 @@ pub(crate) fn sync_heaps() {
                         // slot from this anyway, they wait for a draw
                         // or a pass: noted some frames on, unless a
                         // draw's table turns out to hold them.
-                        if matches!(word(2) >> KIND_SHIFT, CONSTANT | PLACED) && host.copied_waits() {
+                        if matches!(word(2) >> KIND_SHIFT, CONSTANT | PLACED | BUFFER_VIEW) && host.copied_waits() {
                             out.wait.push(index);
                             continue;
                         }
@@ -1402,6 +1402,112 @@ fn shape_made(shape: &Shape, kept: usize) {
     }
 }
 
+/// A record's kind: a view of a buffer the title placed in its memory,
+/// named whole ([`buffer_words`]).
+const BUFFER_VIEW: u32 = 3;
+/// Bits of a placed buffer view's element count in its record, above the
+/// address; the 4 bits above them number its model ([`BUFFER_MODELS`]).
+const BUFFER_ELEMENT_BITS: u32 = 18;
+/// The models of placed buffer views a record can name: a buffer view's shape
+/// without the buffer's width and the view's element count.
+const BUFFER_MODEL_COUNT: usize = 1 << (62 - PLACED_ADDRESS_BITS - BUFFER_ELEMENT_BITS);
+static BUFFER_MODELS: std::sync::RwLock<Vec<Shape>> = std::sync::RwLock::new(Vec::new());
+
+/// Of the view words a buffer view's shape keeps, where its first element
+/// (two words), element count, stride and flags are, and for unordered
+/// access its counter's offset (two words): D3D12's buffer members of a
+/// shader resource view (from word 4) and of an unordered access view (from
+/// word 2).
+fn buffer_view_words(unordered: bool) -> (usize, usize, usize, usize, Option<usize>) {
+    if unordered { (2, 4, 5, 8, Some(6)) } else { (4, 6, 7, 8, None) }
+}
+
+/// The bytes of a buffer view's element, from its stride and flags: the
+/// stride of a structured view, four of a raw one; `None` for a typed view.
+fn buffer_element_bytes(view: &[u32; 14], unordered: bool) -> Option<u32> {
+    const RAW: u32 = 1;
+    let (_, _, stride, flags, _) = buffer_view_words(unordered);
+    if view[stride] > 0 {
+        Some(view[stride])
+    } else if view[flags] & RAW != 0 {
+        Some(4)
+    } else {
+        None
+    }
+}
+
+/// The record words that name a view of a buffer the title placed at
+/// `address` whole, with `shape` its shape: its model, its element count and
+/// its address. A title that views its memory as raw buffers of ever other
+/// lengths made a shape for each length (nearly all the shapes made while
+/// driving, once their unread words were left out); such a view is named by
+/// its model, which is all of it but the buffer's width and the view's
+/// element count, alike for nearly all of them. Only a view of the whole
+/// buffer from its first element (the width is the elements' bytes), raw
+/// or structured, with no counter, of fewer than 2^18 elements, and while
+/// there is room for its model; `None` for any other, which keeps its shape.
+fn buffer_words(shape: &Shape, address: u64) -> Option<[u32; 2]> {
+    const BUFFER: u32 = 1;
+    let (unordered, resource, view) = shape;
+    if resource[0] != BUFFER || view[1] != BUFFER || address >> PLACED_ADDRESS_BITS != 0 {
+        return None;
+    }
+    let (first, count, _, _, counter) = buffer_view_words(*unordered);
+    let element = buffer_element_bytes(view, *unordered)?;
+    let elements = view[count];
+    let width = u64::from(resource[4]) | u64::from(resource[5]) << 32;
+    if view[first] != 0
+        || view[first + 1] != 0
+        || counter.is_some_and(|c| view[c] != 0 || view[c + 1] != 0)
+        || elements == 0
+        || elements >> BUFFER_ELEMENT_BITS != 0
+        || u64::from(elements) * u64::from(element) != width
+    {
+        return None;
+    }
+    let mut model = *shape;
+    (model.1[4], model.1[5]) = (0, 0);
+    model.2[count] = 0;
+    let known = BUFFER_MODELS.read().unwrap_or_else(|e| e.into_inner()).iter().position(|m| *m == model);
+    let index = match known {
+        Some(index) => index,
+        None => {
+            let mut models = BUFFER_MODELS.write().unwrap_or_else(|e| e.into_inner());
+            match models.iter().position(|m| *m == model) {
+                Some(index) => index,
+                None if models.len() < BUFFER_MODEL_COUNT => {
+                    models.push(model);
+                    models.len() - 1
+                }
+                None => return None,
+            }
+        }
+    };
+    Some(kind_words(
+        BUFFER_VIEW,
+        (index as u64) << (PLACED_ADDRESS_BITS + BUFFER_ELEMENT_BITS) | u64::from(elements) << PLACED_ADDRESS_BITS | address,
+    ))
+}
+
+/// The view of a placed buffer [`buffer_words`] named: its model with the
+/// buffer's width and the view's element count put back.
+fn buffer_of(i: u32, generation: u32) -> Option<View> {
+    let payload = payload(i, generation);
+    let address = payload & ((1 << PLACED_ADDRESS_BITS) - 1);
+    let elements = (payload >> PLACED_ADDRESS_BITS) as u32 & ((1 << BUFFER_ELEMENT_BITS) - 1);
+    let index = (payload >> (PLACED_ADDRESS_BITS + BUFFER_ELEMENT_BITS)) as usize;
+    let (unordered, mut resource, view) = *BUFFER_MODELS.read().unwrap_or_else(|e| e.into_inner()).get(index)?;
+    let (_, count, _, _, _) = buffer_view_words(unordered);
+    let width = u64::from(elements) * u64::from(buffer_element_bytes(&view, unordered)?);
+    (resource[4], resource[5]) = (width as u32, (width >> 32) as u32);
+    let mut desc = [0u32; 16];
+    desc[..10].copy_from_slice(&view[..10]);
+    desc[count] = elements;
+    (desc[10], desc[11]) = (address as u32, (address >> 32) as u32);
+    desc[12..].copy_from_slice(&view[10..]);
+    Some(View::Placed(unordered, resource, desc))
+}
+
 /// The record words that name the view of placed memory at `address` with
 /// shape number `shape`.
 fn placed_words(shape: u32, address: u64) -> [u32; 2] {
@@ -1486,6 +1592,12 @@ fn words_for(view: View) -> [u32; 2] {
             View::Placed(unordered, resource, desc) => {
                 let (shape, address) = shape_of(*unordered, resource, desc);
                 if address >> PLACED_ADDRESS_BITS == 0 {
+                    // A buffer view whole, by its model: no shape for each
+                    // length.
+                    if let Some(words) = buffer_words(&shape, address) {
+                        NAMED_WHOLE[1].fetch_add(1, Relaxed);
+                        return words;
+                    }
                     // Nearly every placed view has a shape seen before.
                     let known = views_read().shape_index.get(&shape).copied();
                     let shape = known.or_else(|| views_write().shape(shape));
@@ -1713,6 +1825,7 @@ fn view_at(i: u32, generation: u32) -> Option<View> {
         }
         CONSTANT => Some(constant_of(i, generation)),
         PLACED => views_read().placed_of(i, generation),
+        BUFFER_VIEW => buffer_of(i, generation),
         _ => None,
     }
 }
@@ -2218,6 +2331,64 @@ mod tests {
         assert_ne!(constant_words(0x1000, 256), constant_words(0x1000, 512));
         assert_ne!(constant_words(0x1000, 256), constant_words(0x1100, 256));
         assert_ne!(constant_words(0x1000, 1 << 14), constant_words(0x1000, 64));
+    }
+
+    /// Views of whole placed buffers, raw or structured, are named whole by a
+    /// model and their length: no shape for each length, and each comes back
+    /// as written (but for the words nothing reads). Others keep shapes.
+    #[test]
+    fn placed_buffer_views_of_any_length_add_no_shapes() {
+        if !inline() {
+            return;
+        }
+        let null = std::ptr::null();
+        let slots = [0u64; 4];
+        let at = slots.as_ptr() as u64;
+        // A buffer's description, with flags no other test uses.
+        let buffer = |width: u64, hole: u32| {
+            let mut r = [0u32; 14];
+            (r[0], r[1], r[4], r[5], r[6], r[7], r[9], r[11], r[12], r[13]) =
+                (1, hole, width as u32, (width >> 32) as u32, 1, 1 | 1 << 16, 1, 1, 0x0b0f_f1a6, hole);
+            r
+        };
+        let mine = |r: &[u32; 14]| r[12] == 0x0b0f_f1a6;
+        let shapes = || VIEWS.read().unwrap().shapes.iter().filter(|s| mine(&s.1)).count();
+        let models = || BUFFER_MODELS.read().unwrap().iter().filter(|m| mine(&m.1)).count();
+        let kind = || {
+            // SAFETY: the slot written above.
+            let words = unsafe { (at as *const [u32; 3]).read_unaligned() };
+            words[2] >> KIND_SHIFT
+        };
+        for n in 1..3_000u32 {
+            let placed = 0xd_6000_0000 + u64::from(n) * 0x10_0000;
+            let (low, high) = (placed as u32, (placed >> 32) as u32);
+            // A raw shader view of the whole buffer, with leftovers in the holes.
+            let mut srv = [0u32; 16];
+            (srv[0], srv[1], srv[2], srv[3], srv[6], srv[8], srv[9], srv[10], srv[11], srv[14]) =
+                (0x2a, 1, 0x1688, n, n * 3, 1, n ^ 7, low, high, n);
+            create_placed_srv(null, &buffer(u64::from(n) * 12, n), &srv, at);
+            assert_eq!(kind(), BUFFER_VIEW, "named whole");
+            let mut read = srv;
+            (read[3], read[9], read[14]) = (0, 0, 0);
+            assert_eq!(view(at), Some(View::Placed(false, buffer(u64::from(n) * 12, 0), read)));
+            // A structured unordered view of 16-byte elements.
+            let mut uav = [0u32; 16];
+            (uav[0], uav[1], uav[4], uav[5], uav[10], uav[11]) = (0x2a, 1, n, 16, low, high);
+            create_placed_uav(null, &buffer(u64::from(n) * 16, 0), &uav, at);
+            assert_eq!(kind(), BUFFER_VIEW);
+            assert_eq!(view(at), Some(View::Placed(true, buffer(u64::from(n) * 16, 0), uav)));
+        }
+        assert_eq!(shapes(), 0, "no shape for 6,000 buffer views of every length");
+        assert_eq!(models(), 2);
+        // Of part of the buffer, or from another first element: a shape, as before.
+        let mut part = [0u32; 16];
+        (part[0], part[1], part[2], part[6], part[8], part[10], part[11]) = (0x2a, 1, 0x1688, 10, 1, 0x6000_0000, 0xd);
+        create_placed_srv(null, &buffer(64, 0), &part, at);
+        assert_eq!((kind(), view(at)), (PLACED, Some(View::Placed(false, buffer(64, 0), part))));
+        part[4] = 2;
+        create_placed_srv(null, &buffer(48, 0), &part, at);
+        assert_eq!((kind(), view(at)), (PLACED, Some(View::Placed(false, buffer(48, 0), part))));
+        assert_eq!(shapes(), 2);
     }
 
     /// What the title leaves in the words of a view description the host
