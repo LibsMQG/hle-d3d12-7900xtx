@@ -179,6 +179,17 @@ if ($Tuned) {
     # (194 let go, 169 made again; 313 and 259 in the other pair), for about 25
     # fewer lists alive.
     $settings.VICTORY_PRELUDE_POOL = '1'
+    # Host memory: the windows (1 MiB copies of title memory the card reads,
+    # 4-6 GB of the PC's memory pinned while driving) go to card memory the
+    # CPU maps (resizable BAR), up to 20 % of the card's budget and none under
+    # a budget of 10 GiB; they make room by letting the longest idle texture
+    # copies go (1.4-2 % of those made again). Drives on this preset: the PC's
+    # memory pinned for the card 7.7-10.2 -> 4.0-5.3 GB; at the world's load
+    # free RAM 0.9-2.0 -> 5.2 GB and the game in memory 16.7 -> 13.6 GB; an
+    # in-run A/B moved 1.7 GB of windows to the card in a 90 s phase and back;
+    # frames within the drives' noise; no picture defect. Off by itself on a
+    # card without BAR. Memory, not speed.
+    $settings.VICTORY_WINDOWS_BAR_MB = '6144'
     # The heaps' descriptor records read where they are and compared with AVX2
     # as read, in place of a copy of each changed page first (from zeex64's
     # fork). In-run A/B (19 pairs of 20 s phases: jail, cutscenes, swimming,

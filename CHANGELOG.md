@@ -5,6 +5,26 @@ Each entry names the commit and, where there is one, a tag to go back to:
 (after saving anything newer elsewhere). Frame rates are medians of the log's
 frame lines in the world, diagnostics build, on the PC in the README.
 
+## Windows in card memory in `-Tuned`; placed views' shapes no longer grow (2026-11-28)
+
+`play.ps1 -Tuned` and `-RX7900XTX` set `VICTORY_WINDOWS_BAR_MB=6144`: the
+windows (1 MiB copies of title memory the card reads, 4-6 GB of the PC's
+memory pinned while driving) go to card memory the CPU maps (resizable
+BAR), up to 20 % of the card's budget and none under a budget of 10 GiB;
+the room rule lets the longest idle texture copies go to make room for
+them (1.4-2 % of those are made again). Drives on the reference PC: the
+PC's memory pinned for the card 7.7-10.2 -> 4.0-5.3 GB; at the world's load
+free RAM 0.9-2.0 -> 5.2 GB and the game in memory 16.7 -> 13.6 GB; frames
+within the drives' noise; no picture defect. Memory, not speed.
+
+The shapes of placed views, which grew for the run (1.9 million after eight
+minutes of driving, 550 MB of our heap, never let go), grow far less: the
+words the title leaves from its stack (the holes of a resource's description
+and of a view's) are left out of them, and views of whole placed buffers
+are named whole in their records by a model and their length. A drive made
+about 8,000 shapes by the end of the load where it had made 113,000.
+`VICTORY_PLACED_FILLER=1` keeps the words as before.
+
 ## Soft-view textures hashed on a longer turn in `-Tuned` (2026-11-28)
 
 `play.ps1 -Tuned` and `-RX7900XTX` set `VICTORY_TEXTURE_TURN=32`: a guarded
