@@ -194,7 +194,8 @@ the card, one after the other), not by RAM or VRAM traffic; port 2's real misses
   tree's in-run A/B (`VICTORY_AB`), since the same build varies ~15 ms from run to run.
 - **Measured defaults in `play.ps1 -Tuned`**: card clocks no longer kept up
   (`VICTORY_CARD_AWAKE` off); ports 1, 2, 5, 6 and 7, `VICTORY_PORT_BUFFERS`, `VICTORY_SYNC_IN_PLACE`,
-  `VICTORY_SOFT_VIEWS=copies`, `VICTORY_SKIP_WC_BACK` and `VICTORY_CCD=near` on.
+  `VICTORY_SOFT_VIEWS=copies`, `VICTORY_TEXTURE_TURN=32`, `VICTORY_SKIP_WC_BACK` and `VICTORY_CCD=near`
+  on.
   `-Tuned` sizes the parts that depend on the PC (our helper threads by its logical processors,
   memory kept in place by its RAM, card buffers by its VRAM) and is not tested as such;
   `-RX7900XTX` is the same preset with the exact, measured values of the PC above.

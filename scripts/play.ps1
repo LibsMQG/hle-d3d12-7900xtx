@@ -157,6 +157,15 @@ if ($Tuned) {
     # with more draws and less free RAM in the second; about 2,100 calls a second spared, three
     # views made real in the whole drive; no picture defect from it.
     $settings.VICTORY_SOFT_VIEWS = 'copies'
+    # A guarded texture wholly in those views, which the guard saw unwritten and the hash
+    # never found changed behind it, is hashed every 32nd frame instead of every 8th (hot
+    # textures and videos keep the short turn). In-run A/B on this preset with port 7 (jail,
+    # standing, 11 pairs of 20 s phases, a counter of changed bytes on both sides): textures
+    # hashed 17.3 -> 5.5 MB a frame, the submitting thread's texture time -0.9 ms and its
+    # work -1.4 ms a frame, frames -1.1 % median of the pairs (8 of 11 lower), -1.5 % at
+    # equal draws, p90 61.0 -> 58.3 ms; no change the guard did not see and no picture defect,
+    # a loading screen included. Driving not measured.
+    $settings.VICTORY_TEXTURE_TURN = '32'
     # Host memory: preludes come from one pool shared by all lists, handed back
     # when their submission's fence is passed, in place of one command allocator
     # (about 1.5 MB, never given back) for each list. Jail, standing, two pairs

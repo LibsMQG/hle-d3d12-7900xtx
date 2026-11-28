@@ -5,6 +5,20 @@ Each entry names the commit and, where there is one, a tag to go back to:
 (after saving anything newer elsewhere). Frame rates are medians of the log's
 frame lines in the world, diagnostics build, on the PC in the README.
 
+## Soft-view textures hashed on a longer turn in `-Tuned` (2026-11-28)
+
+`play.ps1 -Tuned` and `-RX7900XTX` set `VICTORY_TEXTURE_TURN=32`: a guarded
+texture all of whose memory lies in the views kept in our books
+(`VICTORY_SOFT_VIEWS`), which the guard saw unwritten and whose hash never
+found a change behind the guard, is hashed every 32nd frame instead of every
+8th; hot textures and videos written through another view keep the short
+turn. In-run A/B on the reference PC with port 7 (jail, standing, 11 pairs of
+20 s phases, a counter of changed bytes on both sides): textures hashed 17.3
+-> 5.5 MB a frame, the submitting thread's texture time -0.9 ms and its work
+-1.4 ms a frame, frames -1.1 % median of the pairs (8 of 11 lower), -1.5 % at
+equal draws, p90 61.0 -> 58.3 ms; no change the guard did not see and no
+picture defect, a loading screen included. Driving not measured.
+
 ## Renderer port 7 on in `-Tuned` (2026-11-27)
 
 `play.ps1 -Tuned` and `-RX7900XTX` turn on renderer port 7
