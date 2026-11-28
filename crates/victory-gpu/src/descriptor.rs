@@ -1218,26 +1218,121 @@ fn constant_of(i: u32, generation: u32) -> View {
     View::Constant(payload & ((1 << CONSTANT_ADDRESS_BITS) - 1), size)
 }
 
-/// A placed view's shape and its address. Words 1 and 13 of a texture's
-/// description are the filler of its layout, where the title leaves what
-/// its stack held: kept, they made nearly every view a shape of its own
-/// (1.9 million after eight minutes of driving, 550 MB with their index,
-/// never let go), so they are left out, as every use of a placed texture's
-/// description leaves them out (`crate::resource::texture_at`,
-/// `same_placed_texture`); `VICTORY_PLACED_FILLER=1` keeps them.
+/// A placed view's shape and its address. What the title leaves there from
+/// its stack is left out, so that views alike share a shape: kept, it made
+/// nearly every view a shape of its own (1.9 million after eight minutes of
+/// driving, 550 MB with their index, never let go). That is words 1 and 13
+/// of a texture's description, the filler of its layout (every use of a
+/// placed texture's description leaves them out: `crate::resource::texture_at`,
+/// `same_placed_texture`), and the view's words the host never reads
+/// ([`view_words_read`]). `VICTORY_PLACED_FILLER=1` keeps them all.
 fn shape_of(unordered: bool, resource: &[u32; 14], desc: &[u32; 16]) -> (Shape, u64) {
     const BUFFER: u32 = 1;
     let mut rest = [0u32; 14];
     rest[..10].copy_from_slice(&desc[..10]);
     rest[10..].copy_from_slice(&desc[12..]);
     let mut resource = *resource;
-    if resource[0] != BUFFER && !crate::resource::placed_filler_kept() {
-        (resource[1], resource[13]) = (0, 0);
+    if !crate::resource::placed_filler_kept() {
+        if resource[0] != BUFFER {
+            (resource[1], resource[13]) = (0, 0);
+        }
+        let read = view_words_read(unordered, desc[1]);
+        for (w, word) in rest[..10].iter_mut().enumerate() {
+            if !read[w] {
+                *word = 0;
+            }
+        }
+        rest[10..].fill(0);
     }
     (
         (unordered, resource, rest),
         u64::from(desc[10]) | u64::from(desc[11]) << 32,
     )
+}
+
+/// Which of the ten words of a placed view's description, a D3D12 shader
+/// resource (`unordered` false) or unordered access view description as the
+/// host reads it (`srv_desc`, `uav_desc` in `descriptor::host`), say
+/// anything for a view of `dimension`: the format, the dimension, a shader
+/// view's component mapping, and the words of the union member of that
+/// dimension. Not read: the hole before a shader view's union (word 3,
+/// where the union of 8-byte alignment begins), the union's words past its
+/// member, and words 12 to 15 of the title's 16 (past the address); the title
+/// leaves there what its stack held. Unknown dimensions: all ten.
+fn view_words_read(unordered: bool, dimension: u32) -> [bool; 10] {
+    // Where the union begins, and how many of its words each dimension uses.
+    // (2D MS: the member's one word, and the next, are kept all the same,
+    // for code that reads a first level and a count of every texture view.)
+    let (union, used) = if unordered {
+        // Buffer, 1D, 1D array, 2D, 2D array, 2D MS, 2D MS array, 3D.
+        (2, [0, 7, 1, 3, 2, 4, 2, 2, 3].get(dimension as usize).copied())
+    } else {
+        // Buffer, 1D, 1D array, 2D, 2D array, 2D MS, 2D MS array, 3D,
+        // cube, cube array, acceleration structure.
+        (4, [0, 5, 3, 5, 4, 6, 2, 2, 3, 3, 5, 2].get(dimension as usize).copied())
+    };
+    let Some(used) = used.filter(|_| dimension != 0) else {
+        return [true; 10];
+    };
+    std::array::from_fn(|w| w < 2 || (!unordered && w == 2) || (union..union + used).contains(&w))
+}
+
+/// Diagnostics: the shapes of placed views made, and which of their words
+/// differed from the last shape made of the same kind (unordered or not, the
+/// resource's dimension and format, the view's format and dimension), every
+/// five seconds: words that differ there for nearly every new shape are what
+/// still makes views alike shapes of their own.
+#[cfg(feature = "diagnostics")]
+fn shape_made(shape: &Shape, kept: usize) {
+    struct Made {
+        since: std::time::Instant,
+        made: u64,
+        compared: u64,
+        /// The resource's 14 words, then the view's 14 kept.
+        differed: [u64; 28],
+        last: std::collections::HashMap<(bool, u32, u32, u32, u32), Shape>,
+    }
+    static MADE: std::sync::Mutex<Option<Made>> = std::sync::Mutex::new(None);
+    let mut made = MADE.lock().unwrap_or_else(|e| e.into_inner());
+    let m = made.get_or_insert_with(|| Made {
+        since: std::time::Instant::now(),
+        made: 0,
+        compared: 0,
+        differed: [0; 28],
+        last: std::collections::HashMap::new(),
+    });
+    m.made += 1;
+    let (unordered, resource, rest) = shape;
+    let kind = (*unordered, resource[0], resource[8], rest[0], rest[1]);
+    if let Some((_, was_resource, was_rest)) = m.last.insert(kind, *shape) {
+        m.compared += 1;
+        for (w, (a, b)) in resource.iter().chain(rest).zip(was_resource.iter().chain(&was_rest)).enumerate() {
+            if a != b {
+                m.differed[w] += 1;
+            }
+        }
+    }
+    if m.since.elapsed().as_secs() < 5 {
+        return;
+    }
+    let mut words: Vec<(u64, usize)> = m.differed.iter().copied().zip(0..).filter(|&(n, _)| n > 0).collect();
+    words.sort_unstable_by_key(|&w| std::cmp::Reverse(w));
+    let text: Vec<String> = words
+        .iter()
+        .take(8)
+        .map(|&(n, w)| if w < 14 { format!("resource w{w}: {n}") } else { format!("view w{}: {n}", if w < 24 { w - 14 } else { w - 12 }) })
+        .collect();
+    tracing::info!(
+        "shapes of placed views: {} made in {:.0} s ({kept} kept), {} compared with the last of their kind; words that differed: {}",
+        m.made,
+        m.since.elapsed().as_secs_f64(),
+        m.compared,
+        if text.is_empty() { "none".to_string() } else { text.join(", ") }
+    );
+    (m.since, m.made, m.compared, m.differed) = (std::time::Instant::now(), 0, 0, [0; 28]);
+    if m.last.len() > 1 << 16 {
+        m.last.clear();
+    }
 }
 
 /// The record words that name the view of placed memory at `address` with
@@ -1259,6 +1354,8 @@ impl Views {
         let at = self.shapes.len() as u32;
         self.shapes.push(shape);
         self.shape_index.insert(shape, at);
+        #[cfg(feature = "diagnostics")]
+        shape_made(&shape, self.shapes.len());
         Some(at)
     }
 
@@ -2056,6 +2153,54 @@ mod tests {
         assert_ne!(constant_words(0x1000, 1 << 14), constant_words(0x1000, 64));
     }
 
+    /// What the title leaves in the words of a view description the host
+    /// never reads (the hole before a shader view's union, the union past
+    /// its member, the words after the address) makes no shape of its own.
+    #[test]
+    fn unread_words_of_a_placed_view_make_no_shape_of_their_own() {
+        if !inline() {
+            return;
+        }
+        assert_eq!(
+            view_words_read(false, 4),
+            [true, true, true, false, true, true, true, true, false, false],
+            "a 2D shader view: format, dimension, mapping, first level, levels, plane, clamp"
+        );
+        assert_eq!(view_words_read(true, 4), [true, true, true, true, false, false, false, false, false, false]);
+        assert_eq!(view_words_read(false, 1), [true, true, true, false, true, true, true, true, true, false]);
+        assert_eq!(view_words_read(false, 77), [true; 10], "an unknown dimension: all of it");
+        let null = std::ptr::null();
+        let slots = [0u64; 4];
+        let at = slots.as_ptr() as u64;
+        // A texture description no other test uses, and a 2D view of it.
+        let resource: [u32; 14] = std::array::from_fn(|k| if k == 0 { 3 } else { 0x6aa0_0000 + k as u32 });
+        let shaped = {
+            let mut r = resource;
+            (r[1], r[13]) = (0, 0);
+            r
+        };
+        let shapes = || VIEWS.read().unwrap().shapes.iter().filter(|s| s.1 == shaped).count();
+        let mut desc = [0u32; 16];
+        (desc[0], desc[1], desc[2], desc[5]) = (28, 4, 0x1688, 1);
+        for n in 0..1_000u32 {
+            let placed = 0xd_5000_0000 + u64::from(n) * 0x1_0000;
+            (desc[10], desc[11]) = (placed as u32, (placed >> 32) as u32);
+            // The stack's leftovers.
+            (desc[3], desc[8], desc[9]) = (n, n ^ 0x55, n * 3);
+            desc[12..].fill(n.wrapping_mul(0x9e37_79b9));
+            create_placed_srv(null, &resource, &desc, at);
+            let mut read = desc;
+            (read[3], read[8], read[9]) = (0, 0, 0);
+            read[12..].fill(0);
+            assert_eq!(view(at), Some(View::Placed(false, shaped, read)));
+        }
+        assert_eq!(shapes(), 1, "one shape for 1,000 views that differ only where nothing is read");
+        // Another first level is another shape.
+        desc[4] = 1;
+        create_placed_srv(null, &resource, &desc, at);
+        assert_eq!(shapes(), 2);
+    }
+
     /// The leak of run 65: a title that writes constant buffer views and
     /// views of placed memory at ever new addresses adds nothing to the
     /// table; one shape stands for all the placed views alike.
@@ -2094,13 +2239,18 @@ mod tests {
             let mut filled = resource;
             (filled[1], filled[13]) = (n as u32, (n * 7) as u32);
             create_placed_srv(null, &filled, &desc, at);
-            assert_eq!(view(at), Some(View::Placed(false, shaped, desc)));
+            // (Words 12 to 15 of the view, never read, come back as zeros.)
+            let mut read = desc;
+            read[12..].fill(0);
+            assert_eq!(view(at), Some(View::Placed(false, shaped, read)));
         }
         assert_eq!(entries(), 0, "no table entries");
         assert_eq!(shapes(), 1, "one shape for 20,000 placed views, whatever their filler");
         // The same shape, unordered: another shape.
         create_placed_uav(null, &resource, &desc, at);
-        assert_eq!(view(at), Some(View::Placed(true, shaped, desc)));
+        let mut read = desc;
+        read[12..].fill(0);
+        assert_eq!(view(at), Some(View::Placed(true, shaped, read)));
         assert_eq!(shapes(), 2);
         // Placed memory past 1 TiB (not title memory) is a table entry, as
         // the title wrote it.
