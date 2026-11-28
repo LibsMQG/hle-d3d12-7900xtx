@@ -2545,12 +2545,16 @@ pub(crate) fn housekeeping() {
     let exact: [u64; 6] = std::array::from_fn(|i| EXACT[i].load(Relaxed));
     let free_ram = crate::host::available_physical_ram().map_or(0, |b| b >> 20);
     let blocks = crate::pool::texture_blocks();
+    // Host lists taken by lists of ours at the reset that begins a recording
+    // (`VICTORY_LIST_LAZY`): all, made new, none to take.
+    let (taken, lazy) = crate::list::taken_at_reset();
     tracing::info!(
         "memory housekeeping: card {} MB in use ({} MB counting free heap space) of {} MB (high {} MB, low {} MB); texture copies alive {} MB, \
          let go for room {} MB ({} MB in the last 5 s), made again {} MB ({} MB in the last 5 s); windows {} alive {} MB ({} MB on the card, {} MB more wanted there, VICTORY_WINDOWS_BAR_MB), let go {} MB; \
          free RAM {} MB; let go on a real unmap {} ({} MB), held at a sweep {} times, mapped again {} (VICTORY_UNMAP_EXACT={}); \
          title memory really unmapped {} MB in {} calls; out-of-memory fallback ran 0 times (none in this base; host memory \
          pressure {}); windows let go on unmap {} ({} MB) (VICTORY_WINDOW_UNMAP={}); host lists idle {}, let go as idle {}          (VICTORY_LIST_POOL_IDLE_S); \
+         host lists alive {}, taken at a reset {} (made new {}, none to take {}) (VICTORY_LIST_LAZY={}); \
          room rule let go {} ({} MB) in {} sweeps, raw guard ran {} s (VICTORY_VRAM_RAW_PCT={}); texture blocks {} alive ({} empty, {} given back this run); \
          heaps by occupancy: <25 % {}, 25–50 % {}, 50–75 % {}, >75 % {}; free space inside heaps {} MB; \
          copies let go to empty a sparse heap {} ({} MB) (VICTORY_HEAP_PACK={})",
@@ -2583,6 +2587,11 @@ pub(crate) fn housekeeping() {
         u8::from(crate::shadow::window_unmap()),
         crate::list::idle_lists(),
         crate::list::IDLE_LET_GO.load(Relaxed),
+        crate::host::ALIVE[0].load(Relaxed),
+        taken[0],
+        taken[1],
+        taken[2],
+        u8::from(lazy),
         ROOM_LET_GO[0].load(Relaxed),
         mb(ROOM_LET_GO[1].load(Relaxed)),
         ROOM_LET_GO[2].load(Relaxed),
