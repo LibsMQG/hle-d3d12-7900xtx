@@ -2866,7 +2866,7 @@ pub(crate) const MANY_VIEWS: usize = 64;
 
 /// Whether all the views of a guarded page are guarded together
 /// (`VICTORY_VIEW_GUARD`).
-fn view_guard() -> bool {
+pub(crate) fn view_guard() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("VICTORY_VIEW_GUARD").is_none_or(|v| v != "0"))
 }
@@ -4008,6 +4008,15 @@ pub(crate) fn soft_any(at: usize, len: usize) -> bool {
     len != 0 && SOFT_ANY.load(std::sync::atomic::Ordering::Relaxed) && {
         let r = blocks_of(at, len);
         SOFT.any(r.start, r.end)
+    }
+}
+
+/// Whether views the runtime keeps in its books alone hold every byte of
+/// `[at, at + len)` (`VICTORY_SOFT_VIEWS`; none: false).
+pub(crate) fn soft_all(at: usize, len: usize) -> bool {
+    len != 0 && SOFT_ANY.load(std::sync::atomic::Ordering::Relaxed) && {
+        let r = blocks_of(at, len);
+        SOFT.all(r.start, r.end)
     }
 }
 
@@ -6566,6 +6575,7 @@ mod soft_tests {
             .unwrap()
             .extend([(soft, section, 0, real), (soft + BLOCK, section, BLOCK as u64, real + BLOCK)]);
         soft_view_noted(soft, SIZE);
+        assert!(soft_all(soft, SIZE) && !soft_all(soft, 0));
         title_memory_remapped(soft, SIZE);
         crate::inplace::title_memory_view(soft, SIZE, section, 0);
         // Read from the pages, across both views and on into nothing.
@@ -6581,6 +6591,7 @@ mod soft_tests {
         // Made real (a write of ours is coming): read-only, as guarded.
         assert!(soft_make_real(soft, 1, SOFT_BY_OUR_WRITE));
         assert!(!soft_any(soft, BLOCK) && soft_any(soft + BLOCK, BLOCK));
+        assert!(!soft_all(soft, SIZE) && soft_all(soft + BLOCK, BLOCK));
         assert!(!writable(soft));
         // A write through it faults, opens it and is reported.
         // SAFETY: the view, read-write once the handler has opened it.

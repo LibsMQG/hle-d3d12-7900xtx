@@ -115,6 +115,9 @@ struct Last {
     /// first checks, and after the hash found a change the guard had not
     /// seen ([`hot_textures`]). 0: not checked under the guard yet.
     hot_until: u64,
+    /// The hash once found a change of it the guard had not seen: it keeps
+    /// the turn of [`HASH_EVERY`] frames ([`soft_turn`]).
+    blind_seen: bool,
 }
 
 /// Frames a guarded texture is hashed at every check from its first check,
@@ -136,6 +139,78 @@ const HOT_FRAMES: u64 = 64;
 fn hot_textures() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("VICTORY_TEXTURE_HOT").is_none_or(|v| v != "0"))
+}
+
+/// Every how many frames a guarded texture the guard saw no write to is
+/// hashed all the same, by its address, so that the textures take turns
+/// ([`Staging::refresh`]).
+const HASH_EVERY: u64 = 8;
+
+/// `VICTORY_TEXTURE_TURN=<frames>` (16 to 256, a power of two; unset, or
+/// anything else: [`HASH_EVERY`], as before): the turn of a guarded texture
+/// all of whose memory lies in views the runtime keeps in its books alone
+/// (`VICTORY_SOFT_VIEWS`, `crate::watch::soft_all`), unless it is hot
+/// ([`hot_textures`]) or the hash once found a change of it the guard had
+/// not seen (then [`HASH_EVERY`]), and only while all the views of a page
+/// are guarded together (`VICTORY_VIEW_GUARD`, on by default). The writers
+/// of such a texture are told: the title's own writes meet the guard, also
+/// through another view of the page, the kernel's (DirectStorage) are noted
+/// where the title sees them; the hash is left for what is still not seen,
+/// which only videos were seen to make (they turn hot, and keep the short
+/// turn after). Standing, the turn read 12.4 MB a frame from the books to
+/// hash, 4.4 ms of the threads, and found under 0.05 changes a frame the
+/// guards had not seen, standing or driving (run readcost1, and a drive).
+/// A texture so written that was quiet for a long time, checked at every
+/// frame, shows its first new picture up to this many frames late (eight
+/// before), then it is hot (`VICTORY_TEXTURE_HOT`, on by default).
+/// Diagnostics: with `VICTORY_AB=<s>,VICTORY_TEXTURE_TURN` and no valid
+/// value, 32.
+fn soft_turn() -> u64 {
+    static TURN: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *TURN.get_or_init(|| {
+        let asked = std::env::var("VICTORY_TEXTURE_TURN")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .filter(|n| (16..=256).contains(n) && n.is_power_of_two());
+        let changing = soft_turn_bit().is_some();
+        let turn = asked.unwrap_or(if changing { 32 } else { HASH_EVERY });
+        if turn != HASH_EVERY {
+            let short = HASH_EVERY;
+            let phases = if changing { "; in the phases VICTORY_AB has it on" } else { "" };
+            tracing::info!(
+                "guarded textures wholly in views kept in the books are hashed unwritten every {turn} frames, not \
+                 {short} (VICTORY_TEXTURE_TURN){phases}"
+            );
+        }
+        turn
+    })
+}
+
+/// The `VICTORY_AB` bit of `VICTORY_TEXTURE_TURN`, if the run changes it
+/// (diagnostics builds).
+fn soft_turn_bit() -> Option<u32> {
+    #[cfg(feature = "diagnostics")]
+    {
+        static BIT: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+        *BIT.get_or_init(|| crate::ab::bit("VICTORY_TEXTURE_TURN"))
+    }
+    #[cfg(not(feature = "diagnostics"))]
+    {
+        None
+    }
+}
+
+/// [`soft_turn`] now: with `VICTORY_AB=<s>,VICTORY_TEXTURE_TURN`, the longer
+/// turn only in the phases that have it on, [`HASH_EVERY`] in the others,
+/// so that one run measures both.
+fn soft_turn_now() -> u64 {
+    #[cfg(feature = "diagnostics")]
+    if let Some(bit) = soft_turn_bit()
+        && !crate::ab::on(bit)
+    {
+        return HASH_EVERY;
+    }
+    soft_turn()
 }
 
 // SAFETY: the staging mapping is written only at submission, under
@@ -1367,26 +1442,46 @@ impl Staging {
             && *GUARD.get_or_init(|| std::env::var_os("VICTORY_TEXTURE_GUARD").is_none_or(|v| v != "0"))
             && let Some((now, written)) = waited(1, || crate::watch::writes(start, start + size, true))
         {
-            const HASH_EVERY: u64 = 8;
             let unwritten = last.asked != 0 && written.iter().all(|&(_, w)| w <= last.asked);
             last.asked = now;
             let frame = crate::frame::current();
-            let turn = frame
-                .wrapping_add((start >> 16) as u64)
-                .is_multiple_of(HASH_EVERY);
+            let place = frame.wrapping_add((start >> 16) as u64);
+            let mut turn = place.is_multiple_of(HASH_EVERY);
             // A texture starts hot: one written that way from its first
             // frames on changes before the hash has ever caught it.
             if last.hot_until == 0 {
                 last.hot_until = frame + HOT_FRAMES;
             }
             let hot = hot_textures() && frame < last.hot_until;
+            // (`VICTORY_TEXTURE_TURN`) A longer turn for one wholly in views
+            // kept in the books, never seen changed behind the guard. (Its
+            // turn frames are also turn frames of the short one: asked only
+            // on those.)
+            if turn && unwritten && !exact && !hot && !last.blind_seen {
+                let longer = soft_turn_now();
+                if longer != HASH_EVERY
+                    && !place.is_multiple_of(longer)
+                    && crate::watch::view_guard()
+                    && crate::watch::soft_all(start, size)
+                {
+                    turn = false;
+                    #[cfg(feature = "diagnostics")]
+                    crate::copystat::add(crate::copystat::C::TexTurnPassed, size as u64);
+                }
+            }
             if !exact && unwritten && !turn && !hot {
                 return 0;
             }
             blind = unwritten;
         }
-        // A change the guard did not see: hashed at every check for a while.
+        // A change the guard did not see: hashed at every check for a while,
+        // and on the short turn from then on.
         let found_blind = |last: &mut Last| {
+            if blind && !last.blind_seen {
+                last.blind_seen = true;
+                #[cfg(feature = "diagnostics")]
+                crate::copystat::add(crate::copystat::C::TexBlindMarked, 1);
+            }
             if blind && hot_textures() {
                 last.hot_until = crate::frame::current() + HOT_FRAMES;
                 #[cfg(feature = "diagnostics")]
@@ -1404,7 +1499,13 @@ impl Staging {
             // texture is read through the kernel instead, whole or not at
             // all (`no_wait`).
             let Some(mapped) = crate::watch::title_memory_reading_now() else {
-                return self.refresh_unlocked(last, size);
+                // (A change found here counts as one found below.)
+                let before = last.hash;
+                let read = self.refresh_unlocked(last, size);
+                if before.is_some() && last.hash != before {
+                    found_blind(last);
+                }
+                return read;
             };
             mapped
         } else {
