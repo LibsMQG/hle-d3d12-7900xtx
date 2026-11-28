@@ -5,6 +5,18 @@ Each entry names the commit and, where there is one, a tag to go back to:
 (after saving anything newer elsewhere). Frame rates are medians of the log's
 frame lines in the world, diagnostics build, on the PC in the README.
 
+## Less of the PC's RAM held in `-Tuned` (2026-11-28)
+
+`play.ps1 -Tuned` and `-RX7900XTX` set `VICTORY_WINDOWS_BAR_PCT=28`,
+`VICTORY_LIST_LAZY=1`, `VICTORY_POOL_DISCARD_FRESH=1`, `VICTORY_SHRINK_KEPT=1` and
+`VICTORY_POOL_DISCARD_BELOW_MB=0` (each off by itself, docs/tuning.md). Release
+drives on the reference PC from the same start: nothing keeps growing (the
+game's private bytes rise only while the card fills, as the driver mirrors the
+card in commit, and stop at the room rule's line); in the first minutes driving
+free RAM 1.1-2.7 -> 2.6-3.9 GB and the game's working set 15.2-16.2 -> 13.3-15.5
+GB. Frames were not compared: the second drive went through far heavier streets.
+`VICTORY_VRAM_LINE_PCT` (the room rule's line, 88 as before) is new and off.
+
 ## Windows in card memory in `-Tuned`; placed views' shapes no longer grow (2026-11-28)
 
 `play.ps1 -Tuned` and `-RX7900XTX` set `VICTORY_WINDOWS_BAR_MB=6144`: the

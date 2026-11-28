@@ -190,6 +190,21 @@ if ($Tuned) {
     # frames within the drives' noise; no picture defect. Off by itself on a
     # card without BAR. Memory, not speed.
     $settings.VICTORY_WINDOWS_BAR_MB = '6144'
+    # The PC's RAM the game holds, cut where it was ours and idle (release drives on
+    # this PC, the same start, the first minutes driving: free RAM 1.1-2.7 -> 2.6-3.9
+    # GB, the game's working set 15.2-16.2 -> 13.3-15.5 GB; nothing kept growing in
+    # either: what grows while driving is the card's commit mirror, and it stops
+    # at the room rule's line). All windows on the card (28 % of the budget, up to
+    # VICTORY_WINDOWS_BAR_MB); lists of ours hold a host list only while they record
+    # (about 400 fewer host lists, 1-2 MB of the driver's memory each, and less
+    # work on the line's thread); pool pages refilled after their unmapping are no
+    # longer reset; capacity only a burst needed given back; the pool discard from
+    # the load on. Frames: not compared (the second drive went through far heavier
+    # streets). Off by themselves: VICTORY_POOL_DISCARD_SOFT (its reads of reset
+    # pages counter rose at once) and VICTORY_SEND_BAR (cost the line's thread before).
+    $settings.VICTORY_WINDOWS_BAR_PCT = '28'; $settings.VICTORY_LIST_LAZY = '1'
+    $settings.VICTORY_POOL_DISCARD_FRESH = '1'; $settings.VICTORY_SHRINK_KEPT = '1'
+    $settings.VICTORY_POOL_DISCARD_BELOW_MB = '0'
     # The heaps' descriptor records read where they are and compared with AVX2
     # as read, in place of a copy of each changed page first (from zeex64's
     # fork). In-run A/B (19 pairs of 20 s phases: jail, cutscenes, swimming,
