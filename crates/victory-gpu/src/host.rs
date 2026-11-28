@@ -151,7 +151,8 @@ pub(crate) fn available_physical_ram() -> Option<u64> {
 /// 80 %, of which 13,000 were made and uploaded again.)
 ///
 /// The 88 % is [`vram_line_pct`]: the copies then come down to 3 points
-/// under the line, and from 7 points over it those idle for 1.5 s go too.
+/// under the line; the 95 %, from which those idle for 1.5 s go too, stays
+/// where it is (it is about the budget itself, not the line).
 pub(crate) fn vram_keep(budget: u64, used: u64) -> (u64, u64) {
     vram_keep_at(budget, used, vram_line_pct())
 }
@@ -166,7 +167,7 @@ fn vram_keep_at(budget: u64, used: u64, line: u64) -> (u64, u64) {
     let share = |percent: u64| budget / 100 * percent;
     if used < share(line) {
         (KEPT_MS, u64::MAX)
-    } else if used < share(line + 7) {
+    } else if used < share(95) {
         (IDLE_MS, used - share(line - 3))
     } else {
         (SHORT_MS, used - share(line - 3))
@@ -11655,7 +11656,9 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at 
         let gib = 1 << 30;
         assert_eq!(vram_keep_at(100 * gib, 74 * gib, 75).0, 600_000);
         assert_eq!(vram_keep_at(100 * gib, 80 * gib, 75), (5_000, 8 * gib));
-        assert_eq!(vram_keep_at(100 * gib, 82 * gib, 75), (1_500, 10 * gib));
+        // Near the budget itself the short wait comes at 95 % as always.
+        assert_eq!(vram_keep_at(100 * gib, 94 * gib, 75), (5_000, 22 * gib));
+        assert_eq!(vram_keep_at(100 * gib, 96 * gib, 75), (1_500, 24 * gib));
         // The line it always had.
         assert_eq!(vram_keep_at(100 * gib, 90 * gib, 88), (5_000, 5 * gib));
     }
