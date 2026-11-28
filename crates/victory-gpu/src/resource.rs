@@ -2515,7 +2515,9 @@ mod exact_tests {
 /// targets), high / low are its 88 % / 85 % marks (`VICTORY_VRAM_LINE_PCT`
 /// and 3 points under it), "let go for room" is
 /// every copy the sweep let go (room rule and real unmaps), and there is no
-/// out-of-memory fallback (0; refused allocations are in `residency`).
+/// out-of-memory fallback (0; refused allocations are in `residency`). Last,
+/// the room only a burst needed that `VICTORY_SHRINK_KEPT=1` gave back
+/// (`crate::kept`).
 #[cfg(windows)]
 pub(crate) fn housekeeping() {
     use std::sync::atomic::Ordering::Relaxed;
@@ -2557,7 +2559,7 @@ pub(crate) fn housekeeping() {
          host lists alive {}, taken at a reset {} (made new {}, none to take {}) (VICTORY_LIST_LAZY={}); \
          room rule let go {} ({} MB) in {} sweeps, raw guard ran {} s (VICTORY_VRAM_RAW_PCT={}); texture blocks {} alive ({} empty, {} given back this run); \
          heaps by occupancy: <25 % {}, 25–50 % {}, 50–75 % {}, >75 % {}; free space inside heaps {} MB; \
-         copies let go to empty a sparse heap {} ({} MB) (VICTORY_HEAP_PACK={})",
+         copies let go to empty a sparse heap {} ({} MB) (VICTORY_HEAP_PACK={}); {}",
         mb(net),
         mb(raw),
         mb(budget),
@@ -2612,6 +2614,7 @@ pub(crate) fn housekeeping() {
             (true, false) => "place",
             _ => "0",
         },
+        crate::kept::text(),
     );
 }
 

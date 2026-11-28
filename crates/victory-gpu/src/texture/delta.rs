@@ -111,17 +111,21 @@ thread_local! {
     static BUF: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// The digest of the title bytes `[at, at + len)` from `memory` now, read
+/// into this thread's buffer. Like the texture read buffer, it does not
+/// shrink unless `VICTORY_SHRINK_KEPT=1` gives it back after a use over
+/// 8 MiB (`crate::kept`).
 fn digest_now(memory: *const u8, (at, len): (usize, usize)) -> Digest {
     BUF.with(|b| {
         let mut b = b.borrow_mut();
-        if b.len() < len {
-            b.resize(len, 0);
-        }
+        crate::kept::grow(&mut b, len);
         let buf = &mut b[..len];
         buf.fill(0);
         // SAFETY: inside the texture's span (`spans` checked `read`).
         crate::host::copy_mapped(buf.as_mut_ptr(), unsafe { memory.add(at) }, len, false);
-        super::digest(buf)
+        let digest = super::digest(buf);
+        crate::kept::after_use(&mut b);
+        digest
     })
 }
 

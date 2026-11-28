@@ -53,6 +53,8 @@ mod indirect;
 #[cfg(windows)]
 mod inplace;
 #[cfg(windows)]
+mod kept; // VICTORY_SHRINK_KEPT=1 (off): room only a burst needed, given back
+#[cfg(windows)]
 mod port;
 #[cfg(windows)]
 mod port_cbv;
