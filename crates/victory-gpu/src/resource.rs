@@ -3419,16 +3419,26 @@ static PLACED_TEXTURES: std::sync::Mutex<std::collections::BTreeMap<(u64, [u32; 
     std::sync::Mutex::new(std::collections::BTreeMap::new());
 
 /// The placed textures asked for with filler words set, as asked
-/// (address and description): for [`PLACED_TWINS`].
-#[cfg(windows)]
+/// (address and description): for [`PLACED_TWINS`]. Diagnostics builds
+/// only: it grows with every filler ever seen, for a count.
+#[cfg(all(windows, feature = "diagnostics"))]
 static PLACED_RAW: std::sync::Mutex<std::collections::BTreeSet<(u64, [u32; 14])>> =
     std::sync::Mutex::new(std::collections::BTreeSet::new());
 
 /// Placed textures asked for a second time with other filler words in
 /// their description: each was a second resource and host copy before the
 /// filler was left out of the key ([`texture_at`]).
-#[cfg(windows)]
+#[cfg(all(windows, feature = "diagnostics"))]
 static PLACED_TWINS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether words 1 and 13 of a placed texture's description, the filler of
+/// its layout, stay in the keys that name it (`VICTORY_PLACED_FILLER=1`, as
+/// before); by default they are left out ([`texture_at`],
+/// `crate::descriptor`'s shapes of placed views).
+pub(crate) fn placed_filler_kept() -> bool {
+    static KEPT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *KEPT.get_or_init(|| std::env::var_os("VICTORY_PLACED_FILLER").is_some_and(|v| v == "1"))
+}
 
 /// See [`PLACED_TWINS`] (read by the diagnostics build's counters).
 #[cfg(all(windows, feature = "diagnostics"))]
@@ -3511,10 +3521,10 @@ pub(crate) fn texture_at(address: u64, desc: &[u32; 14]) -> Option<This> {
     // them each got a resource and a host copy of their own, on a card
     // that fills at world entry. They are not part of what a texture is.
     // `VICTORY_PLACED_FILLER=1`: kept in the key, as before.
-    static KEPT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    #[cfg(feature = "diagnostics")]
     let raw = *desc;
     let mut key = *desc;
-    if !*KEPT.get_or_init(|| std::env::var_os("VICTORY_PLACED_FILLER").is_some_and(|v| v == "1")) {
+    if !placed_filler_kept() {
         key[1] = 0;
         key[13] = 0;
     }
@@ -3522,6 +3532,7 @@ pub(crate) fn texture_at(address: u64, desc: &[u32; 14]) -> Option<This> {
     let mut map = PLACED_TEXTURES.lock().unwrap_or_else(|e| e.into_inner());
     // How many resources the filler alone would have added (a count for
     // the log: `placed_filler_twins`).
+    #[cfg(feature = "diagnostics")]
     if raw != key {
         let mut seen = PLACED_RAW.lock().unwrap_or_else(|e| e.into_inner());
         if seen.insert((address, raw)) {

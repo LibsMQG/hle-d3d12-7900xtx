@@ -1218,13 +1218,24 @@ fn constant_of(i: u32, generation: u32) -> View {
     View::Constant(payload & ((1 << CONSTANT_ADDRESS_BITS) - 1), size)
 }
 
-/// A placed view's shape and its address.
+/// A placed view's shape and its address. Words 1 and 13 of a texture's
+/// description are the filler of its layout, where the title leaves what
+/// its stack held: kept, they made nearly every view a shape of its own
+/// (1.9 million after eight minutes of driving, 550 MB with their index,
+/// never let go), so they are left out, as every use of a placed texture's
+/// description leaves them out (`crate::resource::texture_at`,
+/// `same_placed_texture`); `VICTORY_PLACED_FILLER=1` keeps them.
 fn shape_of(unordered: bool, resource: &[u32; 14], desc: &[u32; 16]) -> (Shape, u64) {
+    const BUFFER: u32 = 1;
     let mut rest = [0u32; 14];
     rest[..10].copy_from_slice(&desc[..10]);
     rest[10..].copy_from_slice(&desc[12..]);
+    let mut resource = *resource;
+    if resource[0] != BUFFER && !crate::resource::placed_filler_kept() {
+        (resource[1], resource[13]) = (0, 0);
+    }
     (
-        (unordered, *resource, rest),
+        (unordered, resource, rest),
         u64::from(desc[10]) | u64::from(desc[11]) << 32,
     )
 }
@@ -2059,29 +2070,40 @@ mod tests {
         // A resource description and a view no other test uses.
         let resource: [u32; 14] = std::array::from_fn(|k| 0x5ee0_0000 + k as u32);
         let mut desc: [u32; 16] = std::array::from_fn(|k| 0x7a70_0000 + k as u32);
+        // A view named by its shape comes back without the filler words of
+        // its description (1 and 13).
+        let shaped = {
+            let mut r = resource;
+            (r[1], r[13]) = (0, 0);
+            r
+        };
         let mine = |v: &View| match v {
             View::Constant(address, _) => (0x6_0000_0000..0x6_1000_0000).contains(address),
-            View::Placed(_, r, _) => *r == resource,
+            View::Placed(_, r, _) => *r == resource || *r == shaped,
             _ => false,
         };
         let entries = || VIEWS.read().unwrap().list.iter().filter(|(v, _)| mine(v)).count();
-        let shapes = || VIEWS.read().unwrap().shapes.iter().filter(|s| s.1 == resource).count();
+        let shapes = || VIEWS.read().unwrap().shapes.iter().filter(|s| s.1 == shaped).count();
         for n in 0..20_000u64 {
             let address = 0x6_0000_0000 + n * 0x100;
             create_cbv(null, &[address as u32, (address >> 32) as u32, 512, 0], at);
             assert_eq!(view(at), Some(View::Constant(address, 512)));
             let placed = 0xd_4940_0000 + n * 0x1_0000;
             (desc[10], desc[11]) = (placed as u32, (placed >> 32) as u32);
-            create_placed_srv(null, &resource, &desc, at);
-            assert_eq!(view(at), Some(View::Placed(false, resource, desc)));
+            // Whatever the title's stack left in the filler.
+            let mut filled = resource;
+            (filled[1], filled[13]) = (n as u32, (n * 7) as u32);
+            create_placed_srv(null, &filled, &desc, at);
+            assert_eq!(view(at), Some(View::Placed(false, shaped, desc)));
         }
         assert_eq!(entries(), 0, "no table entries");
-        assert_eq!(shapes(), 1, "one shape for 20,000 placed views");
+        assert_eq!(shapes(), 1, "one shape for 20,000 placed views, whatever their filler");
         // The same shape, unordered: another shape.
         create_placed_uav(null, &resource, &desc, at);
-        assert_eq!(view(at), Some(View::Placed(true, resource, desc)));
+        assert_eq!(view(at), Some(View::Placed(true, shaped, desc)));
         assert_eq!(shapes(), 2);
-        // Placed memory past 1 TiB (not title memory) is a table entry.
+        // Placed memory past 1 TiB (not title memory) is a table entry, as
+        // the title wrote it.
         (desc[10], desc[11]) = (0, 0x100);
         create_placed_srv(null, &resource, &desc, at);
         assert_eq!(view(at), Some(View::Placed(false, resource, desc)));
