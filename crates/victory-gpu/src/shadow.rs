@@ -561,10 +561,6 @@ fn windows_mapped_now() -> bool {
 /// Bytes alive of windows in card memory the CPU maps.
 static WINDOW_MAPPED_BYTES: AtomicU64 = AtomicU64::new(0);
 
-/// Bytes of windows outside buffers alive at the last count
-/// ([`windows_alive`], with every housekeeping line).
-static WINDOWS_ALIVE_BYTES: AtomicU64 = AtomicU64::new(0);
-
 /// For the housekeeping line: bytes alive of windows in card memory the CPU
 /// maps ([`window_mapped_most`]).
 #[cfg(windows)]
@@ -572,19 +568,21 @@ pub(crate) fn windows_on_card() -> u64 {
     WINDOW_MAPPED_BYTES.load(Ordering::Relaxed)
 }
 
-/// For the room rule (`crate::resource::let_go_idle`): the bytes of windows
-/// that would lie in card memory if there were room, up to
-/// [`window_mapped_cap`] (those alive at the last count less those there
-/// now). The rule counts them as in use, so it lets the longest idle texture
-/// copies go to make that room: copies idle the longest are seldom made again
-/// (66 MB of 4.85 GB in run winbar-ab1), and windows are used every frame.
+/// For the room rule (`crate::resource::let_go_idle`, once a second): the
+/// bytes of windows that would lie in card memory if there were room, up to
+/// [`window_mapped_cap`] (those alive less those there now, counted at each
+/// call, whatever the log asks for). The rule counts them as in use, so it
+/// lets the longest idle texture copies go to make that room: copies idle the
+/// longest are seldom made again (66 MB of 4.85 GB in run winbar-ab1), and
+/// windows are used every frame.
 #[cfg(windows)]
 pub(crate) fn windows_wanting_card(budget: u64) -> u64 {
     if !windows_mapped_now() {
         return 0;
     }
     let on = WINDOW_MAPPED_BYTES.load(Ordering::Relaxed);
-    window_mapped_cap(budget).min(WINDOWS_ALIVE_BYTES.load(Ordering::Relaxed)).saturating_sub(on)
+    let [_, alive] = windows_alive();
+    window_mapped_cap(budget).min(alive).saturating_sub(on)
 }
 
 /// A buffer for a window of `size` bytes in card memory the CPU maps, if it is
@@ -2951,7 +2949,6 @@ pub(crate) fn windows_alive() -> [u64; 2] {
     let loose = LOOSE.read().unwrap_or_else(|e| e.into_inner());
     let mut seen = std::collections::HashSet::new();
     let bytes: u64 = loose.values().filter(|s| seen.insert(Arc::as_ptr(s) as usize)).map(|s| s.len).sum();
-    WINDOWS_ALIVE_BYTES.store(bytes, Ordering::Relaxed);
     [seen.len() as u64, bytes]
 }
 
