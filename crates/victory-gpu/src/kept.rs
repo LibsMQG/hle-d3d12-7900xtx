@@ -67,11 +67,13 @@ fn given_back(room: usize) -> bool {
 }
 
 /// Clears a host list's table at its reset. With the switch, one whose room only a burst
-/// needed is made anew at the size it held ([`table_size`]).
+/// needed is made anew at the size it held ([`table_size`]). A list is reset twice for each
+/// use, and the second reset finds its tables empty: an empty table says nothing of what the
+/// list needs, so it is only cleared (else every table would be made anew at each recording).
 pub(crate) fn clear_table<K: Eq + Hash, V, S: BuildHasher>(table: &mut HashMap<K, V, S>) {
     let held = table.len();
     table.clear();
-    if on() {
+    if on() && held > 0 {
         shrink_cleared(table, held);
     }
 }
