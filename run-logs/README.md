@@ -29,6 +29,7 @@ Thinning leaves fewer samples per window, so medians can differ a little from th
 
 | Folder | File | What it shows |
 |---|---|---|
+| `standing/` | `2026-11-28T0147Z-bench-release.txt` | The window behind the README's release snapshot (Milestones, 2026-11-28): main 48e6467b with port 7, `VICTORY_TEXTURE_TURN=32` and the windows in card memory, all from `-RX7900XTX`, release build, standing in the test spot. |
 | `standing/` | `2026-11-27T2109Z-bench-port7.txt` | The window behind the README's "Results at a glance" (this fork): main 48e6467b with renderer port 7 on, `-RX7900XTX`, standing in the test spot. |
 | `standing/` | `2026-11-27T0757Z-main-counters.txt` | The window behind the previous "Results at a glance" column (64.7 ms): main 1ef9e073 plus counters, standing in the test spot. |
 | `standing/` | `2026-11-27T0828Z-base-a8f83a3.txt` | The same spot on the base tree (root commit a8f83a3): the "RYUKI base" column. |

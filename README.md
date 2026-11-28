@@ -40,6 +40,11 @@ from the card's sensors (4 samples a second); the base also keeps the card's clo
 purpose, which is part of the power difference. One run per side (60-67 s): the same build
 varies by about 15 ms from run to run.
 
+A release build of the newer tree (2026-11-28: the texture turn and the windows in card memory
+added, see [Milestones](#milestones)) at the same spot: **41.1 ms (24.3 fps)**, p90 44.5 ms,
+submitting thread 32.5 ms, the card at 240 W. That is what a player runs; the table above
+compares diagnostics builds, so the two are not an A/B of each other.
+
 Since the column before this one (64.7 ms on `1ef9e07`): `VICTORY_SKIP_WC_BACK` (-22.9 % in an
 in-run A/B), `VICTORY_CCD` (our threads placed by core complex: far -3.3 %, near another -1.5 %
 standing and -14.8 % driving), eight list translators (-0.8 % and -3.4 %) and renderer port 7
@@ -87,6 +92,7 @@ title's own output resolution, no frame generation, ray-traced light off.
 | 2026-11-27 | Write-combined memory of 1 MiB and over kept on the card (`VICTORY_SKIP_WC_BACK`, from klbf-lab): **about 54 ms (18.4 fps)**, submitting thread ~36 ms, the card waiting for it 22.5 -> 10.0 ms a frame; then `VICTORY_CCD` (our threads placed by core complex): far -3.3 %, near another -1.5 % standing and -14.8 % driving. |
 | 2026-11-27 | Light frames above 30 a second (on in `play.ps1`, at up to 60): loading screens 30 -> 59 fps, the pause menu about 55, the map 30 -> 42-50, at their normal speed; the world stays at the title's 30. |
 | 2026-11-27 | Eight list translators on 24 threads, then renderer port 7 on (a round of the heaps' records asked for at the title's submit: the submitting thread's wait for them 6.6 -> 2.4 ms a frame, frames -6.2 % in an in-run A/B): **50.0 ms (20.0 fps)** in [Results at a glance](#results-at-a-glance), submitting thread 41 ms, the title waiting at presents 8 ms. |
+| 2026-11-28 | Guarded textures in soft views hashed every 32nd frame instead of every 8th (`VICTORY_TEXTURE_TURN=32`, -1.1 % in an in-run A/B), the windows in card memory (`VICTORY_WINDOWS_BAR_MB=6144`: the PC's memory pinned for the card while driving 7.7-10.2 -> 4.0-5.3 GB; memory, not speed) and placed views' records no longer growing with every new area. First measure of a **release build** (what a player runs: no diagnostics counters), same spot: **41.1 ms (24.3 fps)**, p90 44.5 ms, submitting thread 32.5 ms, the title waiting at presents 3.4 ms, the card at 240 W and 78 % ([run-logs](run-logs/)). Not an A/B with the row above: that one is a diagnostics build, and runs vary by about 15 ms. |
 
 Moving fast through the world is still far slower (driving: median about 77 ms, p99 about 240 ms,
 with everything in `-Tuned` on before `VICTORY_CCD=near`, which took another 14.8 % off the
