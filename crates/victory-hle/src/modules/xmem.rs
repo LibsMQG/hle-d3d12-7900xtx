@@ -412,10 +412,15 @@ struct Section {
     /// A bit per page: committed, as far as [`Section::window`] asked.
     committed: Box<[std::sync::atomic::AtomicU64]>,
     /// (`VICTORY_POOL_DISCARD`) A bit per page: written through
-    /// [`Section::window`] and not discarded since (resident in our view).
+    /// [`Section::window`] (or, `VICTORY_POOL_DISCARD_SOFT`, read through it
+    /// by the books) and not discarded since (resident in our view).
     resident: Box<[std::sync::atomic::AtomicU64]>,
     /// (`VICTORY_POOL_DISCARD`) A bit per page: discarded and not written since.
     discarded: Box<[std::sync::atomic::AtomicU64]>,
+    /// (`VICTORY_POOL_DISCARD`) A bit per page: written through
+    /// [`Section::window`] since it was last noted for a discard
+    /// ([`pool_discard::unshown`]); what `VICTORY_POOL_DISCARD_FRESH` keeps.
+    fresh: Box<[std::sync::atomic::AtomicU64]>,
 }
 
 impl Section {
@@ -736,6 +741,7 @@ pub extern "system" fn XMemAllocatePhysicalPages(
         committed: (0..n.div_ceil(64)).map(|_| std::sync::atomic::AtomicU64::new(0)).collect(),
         resident: (0..n.div_ceil(64)).map(|_| std::sync::atomic::AtomicU64::new(0)).collect(),
         discarded: (0..n.div_ceil(64)).map(|_| std::sync::atomic::AtomicU64::new(0)).collect(),
+        fresh: (0..n.div_ceil(64)).map(|_| std::sync::atomic::AtomicU64::new(0)).collect(),
     });
     let mut table = page_table_mut();
     let first = table.next_page;
@@ -2498,6 +2504,10 @@ mod soft {
                 unsafe {
                     std::ptr::copy_nonoverlapping((window + slice.index * PAGE + (at - base)) as *const u8, to, n);
                 }
+                // (`VICTORY_POOL_DISCARD`) The page is in our working set now.
+                // With the lock still held: a `take` of the view, and so the
+                // page's noting for a discard, comes after the mark.
+                super::pool_discard::read(&slice.section, slice.index);
                 return (true, n);
             }
         }
@@ -2741,6 +2751,23 @@ mod soft {
 /// map of it can come between the check and the reset. Pages of sections
 /// without a whole view are never touched. `VICTORY_POOL_DISCARD_DELAY_S`:
 /// 0 (default) adaptive 2-10 s, N fixed. Line every 30 s: "pool discard: ...".
+///
+/// `VICTORY_POOL_DISCARD_FRESH=1` (default off): a page DirectStorage wrote
+/// again after the unmapping that noted it (a refill the title is yet to map)
+/// is kept when its discard comes due, not reset with the new bytes in it; it
+/// is looked at again once it is unmapped again. Such pages are counted with
+/// the switch or without ("written again after their unmapping").
+///
+/// `VICTORY_POOL_DISCARD_SOFT=1` (default off): a page the books read through
+/// the lasting view ([`soft::read`], `VICTORY_SOFT_VIEWS=copies`) counts as
+/// resident, as one written through it does, and is discarded the same way;
+/// before, only DirectStorage's writes made a page resident, and the pages the
+/// books read stayed in the working set. A read is no refill: it leaves the
+/// discarded bit as it is. The books' reads of a page discarded and not
+/// written since are counted with the switch or without ("read while
+/// discarded"): they get what the reset left (zeros or the old bytes) unless
+/// the title refilled the page through a view of its own, which no bit here
+/// sees.
 mod pool_discard {
     use std::collections::{HashMap, VecDeque};
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
@@ -2755,17 +2782,38 @@ mod pool_discard {
             let window = std::env::var_os("VICTORY_SECTION_WINDOW").is_none_or(|v| v != "0");
             let on = window && std::env::var_os("VICTORY_POOL_DISCARD").is_some_and(|v| v == "1");
             tracing::info!(on, "VICTORY_POOL_DISCARD: pool pages the title has given back (shown by no view but its whole pool view) are reset and taken out of the working set in the section's lasting view while free RAM is short");
+            if on {
+                let switch = |name: &str| std::env::var_os(name).is_some_and(|v| v == "1");
+                let (fresh, soft) = (switch("VICTORY_POOL_DISCARD_FRESH"), switch("VICTORY_POOL_DISCARD_SOFT"));
+                KEEP_FRESH.store(fresh, Relaxed);
+                SOFT_READS.store(soft, Relaxed);
+                tracing::info!(
+                    fresh,
+                    soft,
+                    "VICTORY_POOL_DISCARD_FRESH: pool pages DirectStorage wrote again after their unmapping are kept when their discard comes due (counted either way); VICTORY_POOL_DISCARD_SOFT: pool pages the books read through the lasting view count as resident and are discarded too"
+                );
+            }
             on
         })
     }
 
+    /// `VICTORY_POOL_DISCARD_FRESH` and `VICTORY_POOL_DISCARD_SOFT`, read
+    /// with [`on`]: off until it has been asked, and without the discard.
+    static KEEP_FRESH: AtomicBool = AtomicBool::new(false);
+    static SOFT_READS: AtomicBool = AtomicBool::new(false);
+
     /// Pages resident through the lasting views, discarded since the
-    /// start, resets refused, rewritten within 5 s of their discard.
-    static COUNTS: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
+    /// start, resets refused, rewritten within 5 s of their discard;
+    /// pages whose discard came due after DirectStorage wrote them again
+    /// since their unmapping (kept or not, [`claim`]); the books' reads of
+    /// pages discarded and not written since ([`read`]).
+    static COUNTS: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
     const RESIDENT: usize = 0;
     const DISCARDED: usize = 1;
     const FAILED: usize = 2;
     const REWRITTEN: usize = 3;
+    const WRITTEN_AGAIN: usize = 4;
+    const READ_DISCARDED: usize = 5;
 
     /// Pages that lost a view, to look at again later: when, and the page.
     static UNSHOWN: Mutex<VecDeque<(Instant, Slice)>> = Mutex::new(VecDeque::new());
@@ -2785,14 +2833,22 @@ mod pool_discard {
     /// Pages `[index, index + n)` of `section` were written through its
     /// lasting view: resident there from now on.
     pub(super) fn written(section: &Section, index: usize, n: usize) {
-        if !on() {
-            return;
+        if on() {
+            mark_written(section, index, n);
         }
+    }
+
+    /// [`written`], the switch aside: resident, discarded no more (a refill),
+    /// and written since the page was last noted for a discard (what
+    /// `VICTORY_POOL_DISCARD_FRESH` keeps; marked with or without it, for the
+    /// count).
+    fn mark_written(section: &Section, index: usize, n: usize) {
         for k in index..(index + n).min(section.pages) {
             let bit = 1u64 << (k % 64);
             if section.resident[k / 64].fetch_or(bit, Relaxed) & bit == 0 {
                 COUNTS[RESIDENT].fetch_add(1, Relaxed);
             }
+            section.fresh[k / 64].fetch_or(bit, Relaxed);
             if section.discarded[k / 64].fetch_and(!bit, Relaxed) & bit != 0 {
                 let at = DISCARDED_AT.lock().unwrap_or_else(|e| e.into_inner()).remove(&key(section, k));
                 if at.is_some_and(|at| at.elapsed() < Duration::from_secs(5)) {
@@ -2820,14 +2876,7 @@ mod pool_discard {
     /// A page lost a view (with the views' lock held): noted if it is
     /// resident in our lasting view and only the pool view shows it now.
     pub(super) fn unshown(physical: &Physical, page: &Slice) {
-        if !on() {
-            return;
-        }
-        let bit = 1u64 << (page.index % 64);
-        if page.index >= page.section.pages
-            || page.section.resident[page.index / 64].load(Relaxed) & bit == 0
-            || !only_whole_views(physical, page)
-        {
+        if !on() || !to_note(physical, page) {
             return;
         }
         UNSHOWN.lock().unwrap_or_else(|e| e.into_inner()).push_back((Instant::now(), page.clone()));
@@ -2835,6 +2884,79 @@ mod pool_discard {
         STARTED.call_once(|| {
             let _ = std::thread::Builder::new().name("victory-pool-discard".into()).spawn(discard_loop);
         });
+    }
+
+    /// Whether [`unshown`] notes `page`: resident in our lasting view, and
+    /// shown by whole views alone now. If so it is not written since its
+    /// noting from now on (`VICTORY_POOL_DISCARD_FRESH`): cleared before the
+    /// page is queued, so the loop never meets the noting with an older bit.
+    fn to_note(physical: &Physical, page: &Slice) -> bool {
+        let bit = 1u64 << (page.index % 64);
+        if page.index >= page.section.pages
+            || page.section.resident[page.index / 64].load(Relaxed) & bit == 0
+            || !only_whole_views(physical, page)
+        {
+            return false;
+        }
+        page.section.fresh[page.index / 64].fetch_and(!bit, Relaxed);
+        true
+    }
+
+    /// (`VICTORY_SOFT_VIEWS`) Page `index` of `section` was read through its
+    /// lasting view by the books ([`super::soft::read`]), their lock held:
+    /// nothing here logs or takes a lock, and the switch is the one [`on`]
+    /// read (off until then: such reads are not marked).
+    pub(super) fn read(section: &Section, index: usize) {
+        mark_read(section, index, SOFT_READS.load(Relaxed));
+    }
+
+    /// [`read`]: whether the page was discarded and not written since, which
+    /// is counted, `soft` or not: the read got what the reset left, unless the
+    /// title refilled the page through a view of its own. With `soft`
+    /// (`VICTORY_POOL_DISCARD_SOFT`) the page is resident from now on, as a
+    /// write makes it, so that losing its last view but the pool's notes it
+    /// for a discard; but a read is no refill: the discarded bit stays,
+    /// nothing counts as rewritten, and the page is not written since its
+    /// noting.
+    fn mark_read(section: &Section, index: usize, soft: bool) -> bool {
+        if index >= section.pages {
+            return false;
+        }
+        let (word, bit) = (index / 64, 1u64 << (index % 64));
+        let discarded = section.discarded[word].load(Relaxed) & bit != 0;
+        if discarded {
+            COUNTS[READ_DISCARDED].fetch_add(1, Relaxed);
+        }
+        // Looked at first: most reads are of pages resident already, and the
+        // word is shared with DirectStorage's workers.
+        if soft
+            && section.resident[word].load(Relaxed) & bit == 0
+            && section.resident[word].fetch_or(bit, Relaxed) & bit == 0
+        {
+            COUNTS[RESIDENT].fetch_add(1, Relaxed);
+        }
+        discarded
+    }
+
+    /// Page `index` of `section` is due for its discard, resident and shown by
+    /// whole views alone: whether it is reset, and if so it is claimed for that
+    /// (resident no more, discarded). DirectStorage may have written it again
+    /// since the unmapping that noted it: new bytes the title is yet to map,
+    /// which a reset would lose. Such a page is counted; with `keep_fresh`
+    /// (`VICTORY_POOL_DISCARD_FRESH`) it is kept, resident, until an unmapping
+    /// notes it again; without, it is reset as before.
+    fn claim(section: &Section, index: usize, keep_fresh: bool) -> bool {
+        let (word, bit) = (index / 64, 1u64 << (index % 64));
+        if section.fresh[word].load(Relaxed) & bit != 0 {
+            COUNTS[WRITTEN_AGAIN].fetch_add(1, Relaxed);
+            if keep_fresh {
+                return false;
+            }
+        }
+        section.fresh[word].fetch_and(!bit, Relaxed);
+        section.resident[word].fetch_and(!bit, Relaxed);
+        section.discarded[word].fetch_or(bit, Relaxed);
+        true
     }
 
     fn below() -> u64 {
@@ -2931,8 +3053,13 @@ mod pool_discard {
                     if base == 0 || section.resident[page.index / 64].load(Relaxed) & bit == 0 || !only_whole_views(&physical, page) {
                         continue;
                     }
-                    section.resident[page.index / 64].fetch_and(!bit, Relaxed);
-                    section.discarded[page.index / 64].fetch_or(bit, Relaxed);
+                    // (`VICTORY_POOL_DISCARD_FRESH`) Not one DirectStorage wrote
+                    // again since its unmapping, with the switch. (A write that
+                    // starts between here and the reset is not seen: DirectStorage
+                    // writes without the views' lock.)
+                    if !claim(section, page.index, KEEP_FRESH.load(Relaxed)) {
+                        continue;
+                    }
                     DISCARDED_AT.lock().unwrap_or_else(|e| e.into_inner()).insert(key(section, page.index), Instant::now());
                     WINDOW[0].fetch_add(1, Relaxed);
                     match runs.last_mut() {
@@ -2960,7 +3087,15 @@ mod pool_discard {
         }
     }
 
-    /// "pool discard: ..." with the process's working set.
+    /// "pool discard: ..." with the process's working set. Of the counts since
+    /// the start, "written again after their unmapping" is the pages whose
+    /// discard came due with new bytes in them (kept with
+    /// `VICTORY_POOL_DISCARD_FRESH=1`, else reset as before); "read while
+    /// discarded" is the books' reads of pages reset and not written since:
+    /// above 0, a read got what the reset left unless the title refilled the
+    /// page through a view of its own, the sign to keep
+    /// `VICTORY_POOL_DISCARD_SOFT` off (without it, to look at the discard
+    /// itself).
     fn line() -> String {
         use windows_sys::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
         use windows_sys::Win32::System::Threading::GetCurrentProcess;
@@ -2970,13 +3105,17 @@ mod pool_discard {
         let mb = |pages: u64| (pages * PAGE as u64) >> 20;
         let failed = COUNTS[FAILED].load(Relaxed);
         format!(
-            "pool discard: pool pages resident {} MB, discarded this run {} MB, rewritten within 5 s of a discard {} MB (delay {} ms), working set {} MB (peak {} MB) (VICTORY_POOL_DISCARD=1{}; only under {} MB free RAM, VICTORY_POOL_DISCARD_BELOW_MB{})",
+            "pool discard: pool pages resident {} MB, discarded this run {} MB, rewritten within 5 s of a discard {} MB (delay {} ms), written again after their unmapping {} pages ({}), read while discarded {}, working set {} MB (peak {} MB) (VICTORY_POOL_DISCARD=1{}{}; only under {} MB free RAM, VICTORY_POOL_DISCARD_BELOW_MB{})",
             mb(COUNTS[RESIDENT].load(Relaxed)),
             mb(COUNTS[DISCARDED].load(Relaxed)),
             mb(COUNTS[REWRITTEN].load(Relaxed)),
             delay().as_millis(),
+            COUNTS[WRITTEN_AGAIN].load(Relaxed),
+            if KEEP_FRESH.load(Relaxed) { "kept: VICTORY_POOL_DISCARD_FRESH=1" } else { "reset as before" },
+            COUNTS[READ_DISCARDED].load(Relaxed),
             c.WorkingSetSize >> 20,
             c.PeakWorkingSetSize >> 20,
+            if SOFT_READS.load(Relaxed) { ", VICTORY_POOL_DISCARD_SOFT=1" } else { "" },
             if failed == 0 { String::new() } else { format!(", resets refused {failed}") },
             if below() == u64::MAX { "any".to_owned() } else { (below() >> 20).to_string() },
             if HELD_BY_RAM.load(Relaxed) { "; held now: RAM plentiful" } else { "" },
@@ -2985,7 +3124,16 @@ mod pool_discard {
 
     #[cfg(test)]
     mod tests {
-        use super::next_delay;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+        use windows_sys::Win32::System::Memory::{MEM_RELEASE, MEM_RESERVE, PAGE_NOACCESS, VirtualAlloc, VirtualFree};
+
+        use super::super::{XMemAllocatePhysicalPages, XMemFreePhysicalPages, page_table, shown_mut};
+        use super::{
+            COUNTS, PAGE, Physical, READ_DISCARDED, Section, Slice, WRITTEN_AGAIN, claim, mark_read, mark_written,
+            next_delay, to_note,
+        };
 
         #[test]
         fn the_discard_delay_adapts_to_pages_rewritten_soon() {
@@ -2996,6 +3144,112 @@ mod pool_discard {
             assert_eq!(next_delay(4000, 100, 10, plenty), 4000);
             assert_eq!(next_delay(4000, 10, 10, plenty), 4000, "too few discards to judge");
             assert_eq!(next_delay(8000, 100, 30, Some(512 << 20)), 2000, "short of RAM");
+        }
+
+        /// A new allocation's section, and its page numbers (to give it back).
+        fn section(n: usize) -> (Arc<Section>, Vec<usize>) {
+            let (mut pages, mut given) = (vec![0; n], n);
+            assert_eq!(XMemAllocatePhysicalPages(0, &mut given, pages.as_mut_ptr()), 1);
+            let section = page_table().pages[&pages[0]].section.clone();
+            (section, pages)
+        }
+
+        /// Page `index` of `section`: resident, discarded, written since its
+        /// noting.
+        fn bits(section: &Section, index: usize) -> (bool, bool, bool) {
+            let bit = |words: &[AtomicU64]| words[index / 64].load(Relaxed) >> (index % 64) & 1 != 0;
+            (bit(&section.resident), bit(&section.discarded), bit(&section.fresh))
+        }
+
+        /// (`VICTORY_POOL_DISCARD_FRESH`) A page DirectStorage writes again
+        /// after the unmapping that noted it is counted when its discard comes
+        /// due, and kept with the switch alone; one not written since is reset
+        /// either way.
+        #[test]
+        fn pages_written_again_after_their_unmapping_are_kept_with_the_switch_alone() {
+            const N: usize = 66; // two words of bits
+            let (section, pages) = section(N);
+            let page = |index: usize| Slice { section: section.clone(), index };
+            // The pool view, whole, and room for a view of one page past it: in
+            // the books alone, at addresses of the test's own.
+            // SAFETY: a plain reservation; nothing is mapped in it.
+            let at = unsafe { VirtualAlloc(std::ptr::null(), (N + 1) * PAGE, MEM_RESERVE, PAGE_NOACCESS) } as usize;
+            assert_ne!(at, 0);
+            let mut physical = Physical::default();
+            physical.views.insert(at, (N * PAGE, page(0)));
+            shown_mut().note(at, N * PAGE, &page(0));
+
+            // DirectStorage fills pages 63 and 64 (across the two words), and
+            // from 65 on more than the section holds.
+            mark_written(&section, 63, 2);
+            mark_written(&section, 65, 4);
+            for k in [63, 64, 65] {
+                assert_eq!(bits(&section, k), (true, false, true), "page {k} written");
+            }
+            assert_eq!(bits(&section, 62), (false, false, false));
+            // The title unmaps them: noted, not written since.
+            for k in [63, 64] {
+                assert!(to_note(&physical, &page(k)), "page {k} noted");
+                assert_eq!(bits(&section, k), (true, false, false));
+            }
+            // Page 64 is filled again before its discard comes due; 63 is not.
+            mark_written(&section, 64, 1);
+            let counted = COUNTS[WRITTEN_AGAIN].load(Relaxed);
+            assert!(claim(&section, 63, true), "not written since: reset");
+            assert_eq!(bits(&section, 63), (false, true, false));
+            assert!(!claim(&section, 64, true), "written again: kept with the switch");
+            assert_eq!(bits(&section, 64), (true, false, true), "as it was");
+            assert!(claim(&section, 64, false), "reset as before without it");
+            assert_eq!(bits(&section, 64), (false, true, false));
+            assert_eq!(COUNTS[WRITTEN_AGAIN].load(Relaxed) - counted, 2, "counted either way");
+            // A refill of a page discarded: resident, discarded no more.
+            mark_written(&section, 63, 1);
+            assert_eq!(bits(&section, 63), (true, false, true));
+
+            // Not noted: a page never written, or one another view shows too.
+            assert!(!to_note(&physical, &page(0)), "not resident");
+            mark_written(&section, 0, 1);
+            let other = at + N * PAGE;
+            physical.views.insert(other, (PAGE, page(0)));
+            shown_mut().note(other, PAGE, &page(0));
+            assert!(!to_note(&physical, &page(0)), "shown by another view too");
+            assert_eq!(bits(&section, 0), (true, false, true), "not noted: still written since");
+
+            shown_mut().forget(other, PAGE, &page(0));
+            shown_mut().forget(at, N * PAGE, &page(0));
+            // SAFETY: the test's own reservation, nothing mapped in it.
+            assert_ne!(unsafe { VirtualFree(at as *mut std::ffi::c_void, 0, MEM_RELEASE) }, 0);
+            assert_eq!(XMemFreePhysicalPages(N, pages.as_ptr()), 1);
+        }
+
+        /// (`VICTORY_POOL_DISCARD_SOFT`) A page the books read is resident from
+        /// then on with the switch alone; a read is no refill, and one of a
+        /// page discarded and not written since is counted, switch or not.
+        #[test]
+        fn reads_by_the_books_count_as_resident_with_the_switch_alone() {
+            let (section, pages) = section(2);
+            let counted = COUNTS[READ_DISCARDED].load(Relaxed);
+            assert!(!mark_read(&section, 0, false));
+            assert_eq!(bits(&section, 0), (false, false, false), "without the switch, nothing");
+            assert!(!mark_read(&section, 0, true));
+            assert_eq!(bits(&section, 0), (true, false, false), "resident, not written");
+            // Its discard comes due: reset (nothing wrote it since).
+            assert!(claim(&section, 0, true));
+            assert_eq!(bits(&section, 0), (false, true, false));
+            // Shown and read again with no refill: counted, switch or not, and
+            // still discarded.
+            assert!(mark_read(&section, 0, false));
+            assert_eq!(bits(&section, 0), (false, true, false));
+            assert!(mark_read(&section, 0, true));
+            assert_eq!(bits(&section, 0), (true, true, false), "resident again, still discarded");
+            assert_eq!(COUNTS[READ_DISCARDED].load(Relaxed) - counted, 2);
+            // A refill ends that.
+            mark_written(&section, 0, 1);
+            assert!(!mark_read(&section, 0, true));
+            assert_eq!(bits(&section, 0), (true, false, true));
+            // Past the section's end: nothing.
+            assert!(!mark_read(&section, 2, true));
+            assert_eq!(XMemFreePhysicalPages(2, pages.as_ptr()), 1);
         }
     }
 }
