@@ -2512,7 +2512,8 @@ mod exact_tests {
 /// `VICTORY_HOUSEKEEPING_LOG=0`: none. In this base: "in use" is the net
 /// use the room rule goes by (`vram_keep`: the system's count less the free
 /// space of our texture blocks, plus room kept for buffer copies and
-/// targets), high / low are its 88 % / 85 % marks, "let go for room" is
+/// targets), high / low are its 88 % / 85 % marks (`VICTORY_VRAM_LINE_PCT`
+/// and 3 points under it), "let go for room" is
 /// every copy the sweep let go (room rule and real unmaps), and there is no
 /// out-of-memory fallback (0; refused allocations are in `residency`).
 #[cfg(windows)]
@@ -2556,8 +2557,8 @@ pub(crate) fn housekeeping() {
         mb(net),
         mb(raw),
         mb(budget),
-        mb(share(88)),
-        mb(share(85)),
+        mb(share(crate::host::vram_line_pct())),
+        mb(share(crate::host::vram_line_pct() - 3)),
         mb(KINDS[1].load(Relaxed)),
         mb(gone_now),
         mb(gone_since),

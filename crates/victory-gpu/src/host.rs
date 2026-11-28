@@ -149,7 +149,14 @@ pub(crate) fn available_physical_ram() -> Option<u64> {
 /// (By those times everything idle for 2.5 s went from 75 % of the budget
 /// on: 61,000 of them in the first 300 s of session play-1125-0203, at 78 to
 /// 80 %, of which 13,000 were made and uploaded again.)
+///
+/// The 88 % is [`vram_line_pct`]: the copies then come down to 3 points
+/// under the line, and from 7 points over it those idle for 1.5 s go too.
 pub(crate) fn vram_keep(budget: u64, used: u64) -> (u64, u64) {
+    vram_keep_at(budget, used, vram_line_pct())
+}
+
+fn vram_keep_at(budget: u64, used: u64, line: u64) -> (u64, u64) {
     const KEPT_MS: u64 = 600_000;
     const IDLE_MS: u64 = 5_000;
     const SHORT_MS: u64 = 1_500;
@@ -157,13 +164,27 @@ pub(crate) fn vram_keep(budget: u64, used: u64) -> (u64, u64) {
         return (IDLE_MS, u64::MAX);
     }
     let share = |percent: u64| budget / 100 * percent;
-    if used < share(88) {
+    if used < share(line) {
         (KEPT_MS, u64::MAX)
-    } else if used < share(95) {
-        (IDLE_MS, used - share(85))
+    } else if used < share(line + 7) {
+        (IDLE_MS, used - share(line - 3))
     } else {
-        (SHORT_MS, used - share(85))
+        (SHORT_MS, used - share(line - 3))
     }
+}
+
+/// (`VICTORY_VRAM_LINE_PCT`, 50 to 88; default 88, the line the room rule
+/// always had) Where the room rule starts letting the longest idle copies
+/// of textures go, in percent of the card's budget. The driver charges as
+/// much of the PC's commit as a resource takes on the card (the
+/// write-combined blocks that mirror the 64 MiB texture blocks: 4.2 -> 9.0
+/// GB of commit over a drive, almost none of it in memory), so a lower line
+/// keeps the commit lower, at the cost of copies made again.
+pub(crate) fn vram_line_pct() -> u64 {
+    static PCT: OnceLock<u64> = OnceLock::new();
+    *PCT.get_or_init(|| {
+        std::env::var("VICTORY_VRAM_LINE_PCT").ok().and_then(|v| v.trim().parse::<u64>().ok()).map_or(88, |p| p.clamp(50, 88))
+    })
 }
 
 /// Effective idle timeout (in milliseconds) for VRAM-backed host textures,
@@ -11626,6 +11647,17 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at 
         assert_eq!((ms, bytes), (5_000, 5 * gib));
         assert_eq!(vram_keep(100 * gib, 120 * gib), (1_500, 35 * gib));
         assert_eq!(vram_keep(0, 7).0, 5_000);
+    }
+
+    #[test]
+    fn a_lower_line_lets_copies_go_from_it_down_to_three_points_under() {
+        use super::vram_keep_at;
+        let gib = 1 << 30;
+        assert_eq!(vram_keep_at(100 * gib, 74 * gib, 75).0, 600_000);
+        assert_eq!(vram_keep_at(100 * gib, 80 * gib, 75), (5_000, 8 * gib));
+        assert_eq!(vram_keep_at(100 * gib, 82 * gib, 75), (1_500, 10 * gib));
+        // The line it always had.
+        assert_eq!(vram_keep_at(100 * gib, 90 * gib, 88), (5_000, 5 * gib));
     }
 
     #[test]
