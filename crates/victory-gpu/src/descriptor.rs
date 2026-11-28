@@ -1222,20 +1222,20 @@ fn constant_of(i: u32, generation: u32) -> View {
 /// its stack is left out, so that views alike share a shape: kept, it made
 /// nearly every view a shape of its own (1.9 million after eight minutes of
 /// driving, 550 MB with their index, never let go). That is words 1 and 13
-/// of a texture's description, the filler of its layout (every use of a
+/// of the resource's description, the holes of its layout (every use of a
 /// placed texture's description leaves them out: `crate::resource::texture_at`,
 /// `same_placed_texture`), and the view's words the host never reads
-/// ([`view_words_read`]). `VICTORY_PLACED_FILLER=1` keeps them all.
+/// ([`view_words_read`]); with `VICTORY_PLACED_LOD_CEIL=1` also a shader
+/// view's least level of detail past a whole level ([`lod_ceil`]).
+/// `VICTORY_PLACED_FILLER=1` keeps them all.
 fn shape_of(unordered: bool, resource: &[u32; 14], desc: &[u32; 16]) -> (Shape, u64) {
-    const BUFFER: u32 = 1;
     let mut rest = [0u32; 14];
     rest[..10].copy_from_slice(&desc[..10]);
     rest[10..].copy_from_slice(&desc[12..]);
     let mut resource = *resource;
     if !crate::resource::placed_filler_kept() {
-        if resource[0] != BUFFER {
-            (resource[1], resource[13]) = (0, 0);
-        }
+        // (A buffer's description has the same layout: 1 and 13 are its holes.)
+        (resource[1], resource[13]) = (0, 0);
         let read = view_words_read(unordered, desc[1]);
         for (w, word) in rest[..10].iter_mut().enumerate() {
             if !read[w] {
@@ -1243,11 +1243,46 @@ fn shape_of(unordered: bool, resource: &[u32; 14], desc: &[u32; 16]) -> (Shape, 
             }
         }
         rest[10..].fill(0);
+        if !unordered
+            && lod_ceil()
+            && let Some(w) = lod_clamp_word(desc[1])
+        {
+            let clamp = f32::from_bits(rest[w]);
+            if clamp.is_finite() && clamp > 0.0 && clamp.fract() != 0.0 {
+                rest[w] = clamp.ceil().to_bits();
+            }
+        }
     }
     (
         (unordered, resource, rest),
         u64::from(desc[10]) | u64::from(desc[11]) << 32,
     )
+}
+
+/// `VICTORY_PLACED_LOD_CEIL=1` (off by default): a placed shader view's
+/// least level of detail (`ResourceMinLODClamp`) is rounded up to a whole
+/// level in its shape. A title that eases a streamed texture's clamp from
+/// level to level writes a view with another clamp at nearly every frame,
+/// and each was a shape of its own, never let go. Up, so that no finer
+/// level is read than the title allows: while a clamp eases, the texture is
+/// at most one level coarser than the title's for those frames.
+fn lod_ceil() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_PLACED_LOD_CEIL").is_some_and(|v| v == "1"))
+}
+
+/// The word of a D3D12 shader resource view description (as the host reads
+/// it, `srv_desc`) that holds `ResourceMinLODClamp` for `dimension`: 1D 6,
+/// 1D array 8, 2D 7, 2D array 9, 3D 6, cube 6, cube array 8; none for the
+/// others.
+fn lod_clamp_word(dimension: u32) -> Option<usize> {
+    match dimension {
+        2 | 8 | 9 => Some(6),
+        3 | 10 => Some(8),
+        4 => Some(7),
+        5 => Some(9),
+        _ => None,
+    }
 }
 
 /// Which of the ten words of a placed view's description, a D3D12 shader
@@ -1284,13 +1319,22 @@ fn view_words_read(unordered: bool, dimension: u32) -> [bool; 10] {
 /// still makes views alike shapes of their own.
 #[cfg(feature = "diagnostics")]
 fn shape_made(shape: &Shape, kept: usize) {
+    /// Of the shapes made of one view dimension (shader or unordered).
+    #[derive(Default)]
+    struct Of {
+        made: u64,
+        /// The resource's 14 words, then the view's 14 kept.
+        differed: [u64; 28],
+        /// The view's ten words of the last one made.
+        last: [u32; 10],
+    }
     struct Made {
         since: std::time::Instant,
         made: u64,
         compared: u64,
-        /// The resource's 14 words, then the view's 14 kept.
         differed: [u64; 28],
         last: std::collections::HashMap<(bool, u32, u32, u32, u32), Shape>,
+        by_dimension: std::collections::HashMap<(bool, u32), Of>,
     }
     static MADE: std::sync::Mutex<Option<Made>> = std::sync::Mutex::new(None);
     let mut made = MADE.lock().unwrap_or_else(|e| e.into_inner());
@@ -1300,36 +1344,59 @@ fn shape_made(shape: &Shape, kept: usize) {
         compared: 0,
         differed: [0; 28],
         last: std::collections::HashMap::new(),
+        by_dimension: std::collections::HashMap::new(),
     });
     m.made += 1;
     let (unordered, resource, rest) = shape;
+    let of = m.by_dimension.entry((*unordered, rest[1])).or_default();
+    of.made += 1;
+    of.last.copy_from_slice(&rest[..10]);
     let kind = (*unordered, resource[0], resource[8], rest[0], rest[1]);
     if let Some((_, was_resource, was_rest)) = m.last.insert(kind, *shape) {
         m.compared += 1;
         for (w, (a, b)) in resource.iter().chain(rest).zip(was_resource.iter().chain(&was_rest)).enumerate() {
             if a != b {
                 m.differed[w] += 1;
+                of.differed[w] += 1;
             }
         }
     }
     if m.since.elapsed().as_secs() < 5 {
         return;
     }
-    let mut words: Vec<(u64, usize)> = m.differed.iter().copied().zip(0..).filter(|&(n, _)| n > 0).collect();
-    words.sort_unstable_by_key(|&w| std::cmp::Reverse(w));
-    let text: Vec<String> = words
+    let name = |w: usize| if w < 14 { format!("resource w{w}") } else { format!("view w{}", if w < 24 { w - 14 } else { w - 12 }) };
+    let top = |differed: &[u64; 28], many: usize| {
+        let mut words: Vec<(u64, usize)> = differed.iter().copied().zip(0..).filter(|&(c, _)| c > 0).collect();
+        words.sort_unstable_by_key(|&w| std::cmp::Reverse(w));
+        let text: Vec<String> = words.iter().take(many).map(|&(c, w)| format!("{} {c}", name(w))).collect();
+        if text.is_empty() { "none".to_string() } else { text.join(", ") }
+    };
+    let mut dims: Vec<(&(bool, u32), &Of)> = m.by_dimension.iter().filter(|(_, of)| of.made > 0).collect();
+    dims.sort_unstable_by_key(|(_, of)| std::cmp::Reverse(of.made));
+    let by: Vec<String> = dims
         .iter()
-        .take(8)
-        .map(|&(n, w)| if w < 14 { format!("resource w{w}: {n}") } else { format!("view w{}: {n}", if w < 24 { w - 14 } else { w - 12 }) })
+        .take(3)
+        .map(|(key, of)| {
+            let (unordered, dimension) = **key;
+            format!(
+                "{} {dimension}: {} made, differed {}; the last's view words 2-9 {:08x?}",
+                if unordered { "UAV" } else { "SRV" },
+                of.made,
+                top(&of.differed, 4),
+                &of.last[2..]
+            )
+        })
         .collect();
     tracing::info!(
-        "shapes of placed views: {} made in {:.0} s ({kept} kept), {} compared with the last of their kind; words that differed: {}",
+        "shapes of placed views: {} made in {:.0} s ({kept} kept), {} compared with the last of their kind; words that differed: {}; by view dimension: {}",
         m.made,
         m.since.elapsed().as_secs_f64(),
         m.compared,
-        if text.is_empty() { "none".to_string() } else { text.join(", ") }
+        top(&m.differed, 8),
+        by.join(" | ")
     );
     (m.since, m.made, m.compared, m.differed) = (std::time::Instant::now(), 0, 0, [0; 28]);
+    m.by_dimension.clear();
     if m.last.len() > 1 << 16 {
         m.last.clear();
     }
@@ -2169,6 +2236,9 @@ mod tests {
         assert_eq!(view_words_read(true, 4), [true, true, true, true, false, false, false, false, false, false]);
         assert_eq!(view_words_read(false, 1), [true, true, true, false, true, true, true, true, true, false]);
         assert_eq!(view_words_read(false, 77), [true; 10], "an unknown dimension: all of it");
+        // ResourceMinLODClamp: 2D, 2D array, cube, 3D; none for a buffer.
+        assert_eq!([4, 5, 9, 8, 1].map(lod_clamp_word), [Some(7), Some(9), Some(6), Some(6), None]);
+        assert!(view_words_read(false, 4)[7] && view_words_read(false, 5)[9], "the clamp is a word read");
         let null = std::ptr::null();
         let slots = [0u64; 4];
         let at = slots.as_ptr() as u64;
